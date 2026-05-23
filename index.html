@@ -474,17 +474,21 @@ const SP_USE_LIST = SP_LIST !== 'YOUR_APPLICATIONS_LIST_ID';
 
 // User roles — email must match Microsoft account username (lowercase)
 const USERS = {
-  'mariam.fatima@hotmail.com':      { name: 'Mariam Fatima',  role: 'admin' },
-  'umairlasi@gmail.com':            { name: 'Umar Lasi',      role: 'admin' },
-  'mariam@mfocorp.onmicrosoft.com': { name: 'Mariam (Corp)',  role: 'admin' },
-  'mariamfatimacorp@gmail.com':     { name: 'Mariam Alt',     role: 'admin' },
-  'polypro786@gmail.com':           { name: 'PM 1',           role: 'pm' },
-  't.alhabbal@gmail.com':           { name: 'PM 2',           role: 'pm' },
+  'mariam.fatima@hotmail.com':      { name: 'Mariam Fatima',   role: 'admin' },
+  'umairlasi@gmail.com':            { name: 'Umair Lasi',      role: 'admin' },
+  'mariam@mfocorp.onmicrosoft.com': { name: 'Mariam Fatima',   role: 'admin' },
+  'mariamfatimacorp@gmail.com':     { name: 'Mariam Fatima',   role: 'admin' },
+  'polypro786@gmail.com':           { name: 'Syed',            role: 'pm' },
+  't.alhabbal@gmail.com':           { name: 'Tamer Alhabbal',  role: 'pm' },
 };
 
+// PM options shown in the "Assign PM" dropdown on each application
+// Matches the Property Manager names used in the rental application form
 const PM_NAMES = {
-  'polypro786@gmail.com': 'PM 1',
-  't.alhabbal@gmail.com': 'PM 2',
+  'umairlasi@gmail.com':            'Umair Lasi',
+  't.alhabbal@gmail.com':           'Tamer Alhabbal',
+  'polypro786@gmail.com':           'Syed',
+  'mariam.fatima@hotmail.com':      'Mariam',
 };
 
 // Lease Fast Intake Questionnaire — embedded for reference and future AI integration.
