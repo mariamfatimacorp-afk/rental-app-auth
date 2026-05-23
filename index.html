@@ -11,6 +11,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" defer></script>
 <script src="https://cdn.jsdelivr.net/npm/pizzip@3.1.4/dist/pizzip.min.js" defer></script>
 <script src="https://cdn.jsdelivr.net/npm/docxtemplater@3.47.0/build/docxtemplater.js" defer></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js" defer></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -122,6 +123,7 @@ textarea.notes:focus{outline:none;border-color:var(--acc)}
 .hint{font-size:10px;color:var(--mut);margin-top:1px}
 .cbrow{display:flex;gap:10px;flex-wrap:wrap;margin-top:4px}
 .alert{background:#FFFBEB;border:1px solid #FDE68A;border-radius:6px;padding:8px 12px;font-size:12px;color:#92400E;margin-top:8px}
+@keyframes spin{to{transform:rotate(360deg)}}
 .toast{position:fixed;bottom:18px;right:18px;background:var(--pri);color:#fff;padding:10px 18px;border-radius:8px;font-size:13px;box-shadow:0 4px 20px rgba(0,0,0,.2);transform:translateY(100px);transition:transform .3s;z-index:200}
 .toast.show{transform:translateY(0)}.toast.ok{background:var(--grn)}
 /* LOGIN */
@@ -702,13 +704,15 @@ function fileToDraftApp(f) {
   // Read any previously saved metadata from localStorage (persisted across sessions)
   const saved = appMeta(f.id);
 
-  return {
+  // Base object — empty fields will be filled by PDF extraction or loaded from cache
+  const base = {
     id: f.id, spId: f.id,
     submittedAt: f.createdDateTime ? f.createdDateTime.split('T')[0] : '',
-    status: saved.status || 'new', pmEmail: saved.pmEmail || '', pdfUrl: f.webUrl || '', notes: saved.notes || '',
+    status: 'new', pmEmail: '', pdfUrl: f.webUrl || '', notes: '',
     name: name || f.name.replace(/\.pdf$/i, ''),
-    // Structured fields empty — full data inside the PDF (click View Full Application)
-    propertyAddress: saved.propertyAddress || propertyAddress, propertyManager: saved.pmName || '', desiredOccupancy: '', maxOccupants: '', adults: '', children: '',
+    propertyAddress, propertyManager: '',
+    pdfParsed: false,
+    desiredOccupancy: '', maxOccupants: '', adults: '', children: '',
     sin: '', email: '', phone1: '', phone2: '', dob: '', currentAddress: '',
     coName: '', coSIN: '', coEmail: '', coPhone1: '', coPhone2: '', coCurrentAddress: '', coDob: '',
     prevLandlordName: '', prevLandlordPhone: '', prevAddress: '', prevStay: '', prevRent: '', prevReason: '',
@@ -720,6 +724,15 @@ function fileToDraftApp(f) {
     ackNoPetsPermission: '', ackPetDeposit: '', ackInfoTrue: '', ackAuthorizeObtain: '', ackAuthorizeDisclose: '',
     ref1Name: '', ref1Rel: '', ref1Phone: '', ref2Name: '', ref2Rel: '', ref2Phone: '', ref3Name: '', ref3Rel: '', ref3Phone: '',
     emgName: '', emgAddress: '', emgPhone: '', emgRel: ''
+  };
+
+  // Merge all cached data (status, PM, notes, AND previously extracted PDF fields)
+  return { ...base, ...saved,
+    // Always prefer live values for these
+    id: f.id, spId: f.id, pdfUrl: f.webUrl || saved.pdfUrl || '',
+    name: saved.name || base.name,
+    propertyAddress: saved.propertyAddress || propertyAddress,
+    propertyManager: saved.propertyManager || saved.pmName || '',
   };
 }
 
@@ -1035,6 +1048,14 @@ function selApp(id) {
   const hasEmg = !!a.emgName;
 
   d.innerHTML = `
+    <!-- PDF scan status banner (hidden once data loads) -->
+    <div id="pdfScanStatus" style="display:${a.pdfParsed ? 'none' : 'flex'};align-items:center;gap:10px;
+         background:#EFF6FF;border:1px solid #BFDBFE;border-radius:8px;padding:10px 16px;
+         margin-bottom:14px;font-size:12px;color:#1D4ED8">
+      <span style="font-size:16px;animation:spin 1.2s linear infinite;display:inline-block">⏳</span>
+      <span>Reading PDF to extract applicant details — this happens once per application…</span>
+    </div>
+
     <div class="dhead">
       <div>
         <div class="dname">${a.name}</div>
@@ -1231,6 +1252,11 @@ function selApp(id) {
         <button class="btn btn-acc btn-lg" onclick='openModal(${JSON.stringify(a.id)})'>Generate Lease &rarr;</button>
       </div>
     </div>`;
+
+  // Kick off async PDF extraction if data not yet loaded
+  if (!a.pdfParsed && SP_READY) {
+    extractPdfData(a).catch(e => console.warn('PDF extract:', e));
+  }
 }
 
 // ── APP METADATA (localStorage) ───────────────────────────────────────────────
@@ -1244,6 +1270,179 @@ function appMeta(fileId, updates) {
     return merged;
   }
   return existing;
+}
+
+// ── PDF DATA EXTRACTION ───────────────────────────────────────────────────────
+// Fetches the actual PDF from SharePoint, extracts all text with PDF.js,
+// and parses the rental application form fields using regex patterns.
+// Results are cached in appMeta so the PDF is only fetched once per application.
+
+function initPdfJs() {
+  if (typeof pdfjsLib !== 'undefined' && !pdfjsLib.GlobalWorkerOptions.workerSrc) {
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  }
+}
+
+async function extractPdfData(app) {
+  if (app.pdfParsed) return; // already done
+  if (typeof pdfjsLib === 'undefined') { initPdfJs(); return; }
+  initPdfJs();
+
+  // Show scanning indicator in the detail panel
+  const scanEl = document.getElementById('pdfScanStatus');
+  if (scanEl) scanEl.style.display = 'flex';
+
+  try {
+    const token = await getToken();
+    const res = await fetch(
+      `https://graph.microsoft.com/v1.0/sites/${SP_SITE}/drive/items/${app.id}/content`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    if (!res.ok) throw new Error('PDF fetch ' + res.status);
+
+    const buffer = await res.arrayBuffer();
+    const pdf    = await pdfjsLib.getDocument({ data: buffer }).promise;
+
+    // Extract text from every page, preserving reading order
+    let rawText = '';
+    for (let p = 1; p <= pdf.numPages; p++) {
+      const page    = await pdf.getPage(p);
+      const content = await page.getTextContent();
+      // Sort by Y (descending) then X (ascending) to reconstruct reading order
+      const items   = [...content.items].sort((a, b) => {
+        const dy = Math.round(b.transform[5] - a.transform[5]);
+        return dy !== 0 ? dy : a.transform[4] - b.transform[4];
+      });
+      rawText += items.map(i => i.str).join(' ') + '\n';
+    }
+
+    const fields = parseRentalAppText(rawText);
+    fields.pdfParsed  = true;
+    fields.pdfRawText = rawText.slice(0, 8000); // cache truncated raw text
+
+    // Merge extracted data into live app object
+    Object.assign(app, fields);
+    appMeta(app.id, fields);
+
+    // Re-render detail with full data
+    selApp(app.id);
+    toast('Application data loaded from PDF', 'ok');
+
+  } catch (e) {
+    console.warn('PDF extraction error:', e);
+    const scanEl2 = document.getElementById('pdfScanStatus');
+    if (scanEl2) {
+      scanEl2.innerHTML = '⚠ Could not auto-read PDF — open the PDF link to review fields manually.';
+      scanEl2.style.background = '#fdf0ee';
+      scanEl2.style.color = '#c0392b';
+    }
+  }
+}
+
+function parseRentalAppText(t) {
+  // Helper: try multiple regex patterns, return first match
+  function get(pats, len = 80) {
+    for (const p of pats) {
+      const m = t.match(p);
+      if (m && m[1]) {
+        const v = m[1].trim().replace(/\s{2,}/g, ' ').replace(/[:\|]+$/, '').trim();
+        if (v.length >= 1 && v.length <= len) return v;
+      }
+    }
+    return '';
+  }
+  // Helper: find value that appears after a label on the same or next line
+  function after(label, len = 80) {
+    const esc = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return get([
+      new RegExp(esc + '[:\\s]+([^\\n]{1,' + len + '})'),
+      new RegExp(esc + '\\s*\\|?\\s*([^\\n]{1,' + len + '})'),
+    ], len);
+  }
+
+  return {
+    // ── Applicant ──────────────────────────────────────────────────────────
+    email:       get([/[Ee]-?[Mm]ail[:\s]+([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,6})/]),
+    phone1:      get([/(?:Phone|Cell|Tel|Mobile)[^:]*:\s*([0-9][0-9\s\-().+]{6,18}[0-9])/i]),
+    phone2:      get([/(?:Alt|Alternative|Second|Other)\s+(?:Phone|Cell|Tel)[^:]*:\s*([0-9][0-9\s\-().+]{6,18}[0-9])/i]),
+    dob:         get([/(?:Date\s+of\s+Birth|DOB|Birthdate)[^:]*:\s*([0-9\/\-\.]{6,12})/i]),
+    sin:         get([/\bSIN\b[^:]*:\s*([0-9]{3}[\s\-]?[0-9]{3}[\s\-]?[0-9]{3})/i]),
+    currentAddress: after('Current Address', 100) || after('Present Address', 100),
+
+    // ── Employment ─────────────────────────────────────────────────────────
+    empStatus:    get([/Employment\s+Status[^:]*:\s*([^\n]{2,30})/i]),
+    empEmployer:  after('Employer', 60),
+    empAddress:   after('Employer Address', 100) || after('Business Address', 100),
+    empPosition:  after('Position', 40) || after('Occupation', 40) || after('Job Title', 40),
+    empLength:    after('Length of Employment', 30) || after('Duration of Employment', 30),
+    empWage:      (() => {
+      const v = get([/(?:Monthly\s+)?(?:Wage|Salary|Income|Gross)[^:]*:\s*\$?\s*([0-9,]{3,10})/i]);
+      return v ? parseFloat(v.replace(/,/g, '')) || 0 : 0;
+    })(),
+    empSupervisor:  after('Supervisor', 50),
+    empSupPhone:    get([/Supervisor[^:]*Phone[^:]*:\s*([0-9][0-9\s\-().+]{6,18}[0-9])/i]),
+    empOther:       after('Other Income', 80) || after('Additional Income', 80),
+
+    // ── Co-Applicant ────────────────────────────────────────────────────────
+    coName:       after('Co-Applicant', 50) || after('Co Applicant', 50),
+    coEmail:      get([/Co.{0,20}[Ee]mail[:\s]+([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,6})/i]),
+    coPhone1:     get([/Co.{0,20}[Pp]hone[^:]*:\s*([0-9][0-9\s\-().+]{6,18}[0-9])/i]),
+    coEmpEmployer: get([/Co.{0,20}[Ee]mployer[^:]*:\s*([^\n]{2,60})/i]),
+    coEmpPosition: get([/Co.{0,20}[Pp]osition[^:]*:\s*([^\n]{2,40})/i]),
+    coEmpWage:    (() => {
+      const v = get([/Co.{0,20}(?:Wage|Salary)[^:]*:\s*\$?\s*([0-9,]{3,10})/i]);
+      return v ? parseFloat(v.replace(/,/g, '')) || 0 : 0;
+    })(),
+
+    // ── Previous Tenancy ───────────────────────────────────────────────────
+    prevAddress:       after('Previous Address', 100) || after('Former Address', 100),
+    prevLandlordName:  after('Landlord', 50),
+    prevLandlordPhone: get([/Landlord[^:]*Phone[^:]*:\s*([0-9][0-9\s\-().+]{6,18}[0-9])/i]),
+    prevStay:          after('Length of Stay', 30) || after('How Long', 30),
+    prevRent:          get([/(?:Monthly\s+)?Rent[^:]*:\s*\$?\s*([0-9,]{2,8})/i]),
+    prevReason:        after('Reason for Leaving', 120),
+
+    // ── Occupancy ─────────────────────────────────────────────────────────
+    desiredOccupancy: after('Desired Occupancy', 20) || after('Move.in Date', 20) || after('Desired Move', 20),
+    maxOccupants: get([/(?:Max|Maximum|Total)\s+Occupants?[^:]*:\s*([0-9]{1,2})/i]),
+    adults:       get([/Adults?[^:]*:\s*([0-9]{1,2})/i]),
+    children:     get([/Children[^:]*:\s*([0-9]{1,2})/i]),
+
+    // ── Credit / Background ────────────────────────────────────────────────
+    crBankruptcy:   get([/[Bb]ankruptcy[^:]*:\s*(Yes|No)/i]),
+    crEviction:     get([/[Ee]vict(?:ed|ion)[^:]*:\s*(Yes|No)/i]),
+    crLatePayments: get([/[Ll]ate\s+[Pp]ayments?[^:]*:\s*(Yes|No)/i]),
+    crRefused:      get([/[Rr]efused\s+to\s+[Pp]ay[^:]*:\s*(Yes|No)/i]),
+    crExplanation:  after('Explanation', 200),
+
+    // ── Additional ─────────────────────────────────────────────────────────
+    hasPets:          get([/[Pp]ets?[^:]*:\s*(Yes|No)/i]),
+    petDesc:          after('Pet Description', 80) || after('Type of Pet', 80),
+    smokes:           get([/[Ss]mok(?:ing|e|er)[^:]*:\s*(Yes|No)/i]),
+    hasInsurance:     get([/[Ii]nsurance[^:]*:\s*(Yes|No)/i]),
+
+    // ── References ────────────────────────────────────────────────────────
+    ref1Name:  get([/Reference\s*1[^:]*Name[^:]*:\s*([^\n]{2,50})/i, /Ref(?:erence)?\s*1[:\s]+([^\n]{2,50})/i]),
+    ref1Phone: get([/Reference\s*1[^:]*Phone[^:]*:\s*([0-9][0-9\s\-().+]{6,18}[0-9])/i]),
+    ref1Rel:   get([/Reference\s*1[^:]*Rel(?:ationship)?[^:]*:\s*([^\n]{2,30})/i]),
+    ref2Name:  get([/Reference\s*2[^:]*Name[^:]*:\s*([^\n]{2,50})/i]),
+    ref2Phone: get([/Reference\s*2[^:]*Phone[^:]*:\s*([0-9][0-9\s\-().+]{6,18}[0-9])/i]),
+    ref2Rel:   get([/Reference\s*2[^:]*Rel(?:ationship)?[^:]*:\s*([^\n]{2,30})/i]),
+    ref3Name:  get([/Reference\s*3[^:]*Name[^:]*:\s*([^\n]{2,50})/i]),
+    ref3Phone: get([/Reference\s*3[^:]*Phone[^:]*:\s*([0-9][0-9\s\-().+]{6,18}[0-9])/i]),
+    ref3Rel:   get([/Reference\s*3[^:]*Rel(?:ationship)?[^:]*:\s*([^\n]{2,30})/i]),
+
+    // ── Emergency Contact ──────────────────────────────────────────────────
+    emgName:    after('Emergency Contact', 50),
+    emgRel:     get([/Emergency[^:]*Rel(?:ationship)?[^:]*:\s*([^\n]{2,30})/i]),
+    emgPhone:   get([/Emergency[^:]*Phone[^:]*:\s*([0-9][0-9\s\-().+]{6,18}[0-9])/i]),
+    emgAddress: get([/Emergency[^:]*Address[^:]*:\s*([^\n]{5,100})/i]),
+
+    // ── Property ───────────────────────────────────────────────────────────
+    propertyAddress: after('Property Address', 100) || after('Unit Address', 100) || after('Address of Unit', 100),
+    propertyManager: after('Property Manager', 50),
+  };
 }
 
 async function setStatus(id, s) {
