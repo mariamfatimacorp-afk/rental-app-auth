@@ -620,9 +620,11 @@ async function loadApplications() {
     } else {
       // ── Mode B: PDF folder in SharePoint Documents library ────────────────────
       // Path: Documents > Rental Applications > Rental Applications PDFs
+      // $expand=listItem fetches saved metadata (PM, Status, Notes) alongside each file
       const res = await fetch(
         `https://graph.microsoft.com/v1.0/sites/${SP_SITE}/drive/root:/${encodeURIComponent(SP_FOLDER).replace(/%2F/g,'/')}:/children` +
-        `?$select=id,name,createdDateTime,webUrl,lastModifiedDateTime&$top=200`,
+        `?$select=id,name,createdDateTime,webUrl,lastModifiedDateTime` +
+        `&$expand=listItem($select=fields)&$top=200`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
       if (!res.ok) {
@@ -630,7 +632,7 @@ async function loadApplications() {
         throw new Error(err.error?.message || `HTTP ${res.status} — check the SP_FOLDER path`);
       }
       const data = await res.json();
-      // Filter PDFs only, sort newest first client-side (Graph $orderby not supported on this endpoint)
+      // Filter PDFs only, sort newest first client-side
       const pdfs = (data.value || [])
         .filter(f => f.name.toLowerCase().endsWith('.pdf'))
         .sort((a, b) => new Date(b.createdDateTime) - new Date(a.createdDateTime));
@@ -676,13 +678,19 @@ function fileToDraftApp(f) {
   if (parts.length >= 4 && /rentalapplication/i.test(parts[parts.length - 1])) {
     propertyAddress = parts.slice(2, parts.length - 1).join(' ').trim();
   }
+  // Read any previously saved metadata from the SharePoint listItem fields
+  const saved = f.listItem?.fields || {};
+  const savedPM     = saved.App_PM     || saved.PM_Email || '';
+  const savedStatus = saved.App_Status || saved.Status   || 'new';
+  const savedNotes  = saved.App_Notes  || saved.Notes    || '';
+
   return {
     id: f.id, spId: f.id,
     submittedAt: f.createdDateTime ? f.createdDateTime.split('T')[0] : '',
-    status: 'new', pmEmail: '', pdfUrl: f.webUrl || '', notes: '',
+    status: savedStatus, pmEmail: savedPM, pdfUrl: f.webUrl || '', notes: savedNotes,
     name: name || f.name.replace(/\.pdf$/i, ''),
-    // All structured fields start empty — filled via View PDF or future list integration
-    propertyAddress: propertyAddress, propertyManager: '', desiredOccupancy: '', maxOccupants: '', adults: '', children: '',
+    // All structured fields start empty — full data is inside the PDF (click View PDF)
+    propertyAddress: saved.App_Address || propertyAddress, propertyManager: saved.App_PM_Name || '', desiredOccupancy: '', maxOccupants: '', adults: '', children: '',
     sin: '', email: '', phone1: '', phone2: '', dob: '', currentAddress: '',
     coName: '', coSIN: '', coEmail: '', coPhone1: '', coPhone2: '', coCurrentAddress: '', coDob: '',
     prevLandlordName: '', prevLandlordPhone: '', prevAddress: '', prevStay: '', prevRent: '', prevReason: '',
@@ -909,11 +917,45 @@ function getVisibleApps() {
 }
 
 function renderList() {
-  const shown = getVisibleApps();
-  const totalVisible = currentUser?.role === 'pm'
-    ? apps.filter(a => a.pmEmail === currentUser.email).length
-    : apps.length;
-  document.getElementById('hcount').textContent = totalVisible + ' application' + (totalVisible !== 1 ? 's' : '');
+  const shown   = getVisibleApps();
+
+  // Base list respecting PM role/filter but ignoring status filter — for per-tab counts
+  let base = apps;
+  if (currentUser?.role === 'pm') base = base.filter(a => a.pmEmail === currentUser.email);
+  if (currentUser?.role === 'admin') {
+    const pmSel = document.getElementById('pmFilter')?.value;
+    if (pmSel) base = base.filter(a => a.pmEmail === pmSel);
+  }
+  const total    = base.length;
+  const counts   = { new:0, reviewed:0, approved:0, declined:0 };
+  base.forEach(a => { if (counts[a.status] !== undefined) counts[a.status]++; });
+
+  // Header count — show filtered vs total
+  const hEl = document.getElementById('hcount');
+  if (filter === 'all') {
+    hEl.innerHTML = `<strong>${total}</strong> application${total !== 1 ? 's' : ''} &nbsp;
+      <span style="font-size:11px;color:var(--mut)">
+        ${counts.new ? `${counts.new} new &middot; ` : ''}
+        ${counts.reviewed ? `${counts.reviewed} reviewed &middot; ` : ''}
+        ${counts.approved ? `${counts.approved} approved &middot; ` : ''}
+        ${counts.declined ? `${counts.declined} declined` : ''}
+      </span>`;
+  } else {
+    const label = filter.charAt(0).toUpperCase() + filter.slice(1);
+    hEl.innerHTML = `<strong>${shown.length}</strong> ${label.toLowerCase()} &nbsp;<span style="font-size:11px;color:var(--mut)">(${total} total)</span>`;
+  }
+
+  // Update tab labels with live counts
+  document.querySelectorAll('.ftab').forEach(t => {
+    const fn = t.getAttribute('onclick') || '';
+    const m  = fn.match(/setFilter\('(\w+)'\)/);
+    if (!m) return;
+    const s = m[1];
+    if (s === 'all') { t.textContent = `All (${total})`; return; }
+    const n = counts[s] ?? 0;
+    t.textContent = `${s.charAt(0).toUpperCase() + s.slice(1)}${n ? ` (${n})` : ''}`;
+  });
+
   document.getElementById('alist').innerHTML = shown.map(a => {
     const pmLabel = PM_NAMES[a.pmEmail] || a.propertyManager || '';
     const pmTag = pmLabel ? `<span class="pm-tag">${pmLabel}</span>` : '';
@@ -923,7 +965,7 @@ function renderList() {
         <span class="badge b-${a.status}">${a.status}</span>
       </div>
       <div class="acard-sub">${pmTag}<span>${a.propertyAddress}</span></div>
-      <div class="acard-sub"><span>Move-in: ${a.desiredOccupancy}</span><span>Submitted ${a.submittedAt}</span></div>
+      <div class="acard-sub"><span>Move-in: ${a.desiredOccupancy || '—'}</span><span>Submitted ${a.submittedAt}</span></div>
     </div>`;
   }).join('') || '<div style="padding:20px;text-align:center;font-size:13px;color:var(--mut)">No applications match this filter.</div>';
 }
@@ -972,15 +1014,33 @@ function selApp(id) {
       <div>
         <div class="dname">${a.name}</div>
         <div class="dmeta">
-          <span>${a.email}</span><span>${a.phone1}</span><span>Applied ${a.submittedAt}</span>
-          <span class="pm-tag">${pmLabel}</span>
+          <span>Applied ${a.submittedAt}</span>
+          <span class="pm-tag">${pmLabel !== '—' ? pmLabel : 'No PM assigned'}</span>
         </div>
       </div>
       <div class="dacts">
-        ${a.pdfUrl ? `<a href="${a.pdfUrl}" target="_blank" rel="noopener noreferrer" class="btn btn-out" title="View original rental application PDF">&#128196; View PDF</a>` : ''}
+        ${a.pdfUrl ? `<a href="${a.pdfUrl}" target="_blank" rel="noopener noreferrer" class="btn btn-pri" title="View original rental application PDF">&#128196; View Full Application (PDF)</a>` : ''}
         ${isAdmin && a.status !== 'declined' ? `<button class="btn btn-red" onclick="setStatus(${JSON.stringify(a.id)},'declined')">Decline</button>` : ''}
         ${isAdmin && a.status !== 'approved' ? `<button class="btn btn-grn" onclick="setStatus(${JSON.stringify(a.id)},'approved')">&#10003; Approve</button>` : ''}
         ${a.status === 'approved' ? '<span class="badge b-approved" style="font-size:12px;padding:5px 10px">&#10003; Approved</span>' : ''}
+      </div>
+    </div>
+
+    <!-- PM assignment + info notice -->
+    <div style="background:#f0f4ff;border:1px solid #c7d4f5;border-radius:8px;padding:12px 16px;margin-bottom:16px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+      <div style="display:flex;align-items:center;gap:8px;flex:1">
+        <span style="font-size:13px;font-weight:600;color:#3a4a7a">Assign PM:</span>
+        <select id="pmAssignSelect" onchange="assignPM(${JSON.stringify(a.id)}, this.value)"
+          style="border:1px solid #c7d4f5;border-radius:6px;padding:4px 10px;font-size:13px;background:#fff">
+          <option value="">— Unassigned —</option>
+          ${Object.entries(PM_NAMES).map(([email, name]) =>
+            `<option value="${email}" ${a.pmEmail === email ? 'selected' : ''}>${name}</option>`
+          ).join('')}
+        </select>
+      </div>
+      <div style="font-size:12px;color:#5a6a9a;flex:2">
+        &#128196; <strong>Full application data is in the PDF.</strong>
+        Click <em>View Full Application</em> to review all fields, employment details, references and signatures.
       </div>
     </div>
 
@@ -1152,10 +1212,20 @@ async function setStatus(id, s) {
   const a = apps.find(x => String(x.id) === String(id));
   if (!a) return;
   a.status = s;
-  if (a.spId) await patchSP(a.spId, { Status: s.charAt(0).toUpperCase() + s.slice(1) });
+  if (a.spId) await patchSP(a.spId, { App_Status: s });
   renderList();
   selApp(id);
   toast(s === 'approved' ? 'Application approved' : 'Marked as ' + s, s === 'approved' ? 'ok' : '');
+}
+
+async function assignPM(id, pmEmail) {
+  const a = apps.find(x => String(x.id) === String(id));
+  if (!a) return;
+  a.pmEmail = pmEmail;
+  a.propertyManager = PM_NAMES[pmEmail] || '';
+  if (a.spId) await patchSP(a.spId, { App_PM: pmEmail, App_PM_Name: PM_NAMES[pmEmail] || '' });
+  renderList(); // refresh list card to show PM tag
+  toast(pmEmail ? `Assigned to ${PM_NAMES[pmEmail] || pmEmail}` : 'PM unassigned', 'ok');
 }
 
 async function saveNotes(id) {
