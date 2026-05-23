@@ -495,17 +495,9 @@ Step 10: Conflict review + final DOCX generation
 Rule: Do not generate lease if another unit is rented and existing lease has not been reviewed.`;
 
 // ── MSAL SETUP ────────────────────────────────────────────────────────────────
-let msalApp;
-if (!IS_DEMO) {
-  msalApp = new msal.PublicClientApplication({
-    auth: {
-      clientId:   CLIENT_ID,
-      authority:  `https://login.microsoftonline.com/${TENANT_ID}`,
-      redirectUri: REDIRECT_URI
-    },
-    cache: { cacheLocation: 'sessionStorage', storeAuthStateInCookie: false }
-  });
-}
+// msalApp is created in window.onload to guarantee the MSAL library is fully
+// loaded before we reference it (avoids "msal is not defined" if CDN is slow).
+let msalApp = null;
 // Sites.ReadWrite.All covers listing files, reading/writing file metadata and list items
 const SCOPES = ['User.Read', 'Sites.ReadWrite.All', 'Files.ReadWrite.All'];
 
@@ -1654,7 +1646,6 @@ function toast(msg, type='') {
 }
 
 // ── START ─────────────────────────────────────────────────────────────────────
-init();
-</script>
-</body>
-</html>
+// Use window.onload so all external scripts (MSAL CDN, etc.) are fully loaded
+// before we try to create the PublicClientApplication instance.
+window.addEventListene
