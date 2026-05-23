@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Lasi P. Management — Rental Management</title>
-<script src="https://alcdn.msauth.net/browser/2.39.0/js/msal-browser.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@2.39.0/lib/msal-browser.min.js"></script>
 <script src="https://unpkg.com/html-docx-js/dist/html-docx.js" defer></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" defer></script>
 <style>
@@ -1650,6 +1650,13 @@ function toast(msg, type='') {
 // before we try to create the PublicClientApplication instance.
 window.addEventListener('load', function () {
   if (!IS_DEMO) {
+    if (typeof msal === 'undefined') {
+      console.error('MSAL library did not load from CDN.');
+      document.getElementById('loginError').textContent =
+        'Sign-in library failed to load. Check your internet connection and refresh.';
+      document.getElementById('loginError').style.display = 'block';
+      return;
+    }
     try {
       msalApp = new msal.PublicClientApplication({
         auth: {
@@ -1660,9 +1667,9 @@ window.addEventListener('load', function () {
         cache: { cacheLocation: 'sessionStorage', storeAuthStateInCookie: false }
       });
     } catch (e) {
-      console.error('MSAL init failed:', e);
+      console.error('MSAL PublicClientApplication failed:', e);
       document.getElementById('loginError').textContent =
-        'Authentication library failed to load. Please refresh the page.';
+        'Sign-in setup error: ' + e.message + '. Please refresh the page.';
       document.getElementById('loginError').style.display = 'block';
       return;
     }
