@@ -1648,4 +1648,27 @@ function toast(msg, type='') {
 // ── START ─────────────────────────────────────────────────────────────────────
 // Use window.onload so all external scripts (MSAL CDN, etc.) are fully loaded
 // before we try to create the PublicClientApplication instance.
-window.addEventListene
+window.addEventListener('load', function () {
+  if (!IS_DEMO) {
+    try {
+      msalApp = new msal.PublicClientApplication({
+        auth: {
+          clientId:    CLIENT_ID,
+          authority:   `https://login.microsoftonline.com/${TENANT_ID}`,
+          redirectUri: REDIRECT_URI
+        },
+        cache: { cacheLocation: 'sessionStorage', storeAuthStateInCookie: false }
+      });
+    } catch (e) {
+      console.error('MSAL init failed:', e);
+      document.getElementById('loginError').textContent =
+        'Authentication library failed to load. Please refresh the page.';
+      document.getElementById('loginError').style.display = 'block';
+      return;
+    }
+  }
+  init();
+});
+</script>
+</body>
+</html>
