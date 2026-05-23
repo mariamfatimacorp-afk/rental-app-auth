@@ -4,7 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Lasi P. Management — Rental Management</title>
-<script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@2.39.0/lib/msal-browser.min.js"></script>
+<script src="https://unpkg.com/@azure/msal-browser@2.39.0/lib/msal-browser.min.js"
+  onerror="document.getElementById('loginError').textContent='⚠ Sign-in library blocked by browser or network. Try disabling ad blockers or use a different browser.';document.getElementById('loginError').style.display='block';">
+</script>
 <script src="https://unpkg.com/html-docx-js/dist/html-docx.js" defer></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" defer></script>
 <style>
@@ -512,20 +514,30 @@ async function init() {
   }
   try {
     await msalApp.initialize();
-    const resp = await msalApp.handleRedirectPromise();
-    if (resp && resp.account) { signIn(resp.account); return; }
+    // Popup flow: no redirect response to handle, just check cached accounts
     const accounts = msalApp.getAllAccounts();
     if (accounts.length > 0) { signIn(accounts[0]); return; }
-  } catch(e) { console.warn('MSAL init error:', e); }
+  } catch(e) {
+    console.error('MSAL init error:', e);
+    showLoginError('Authentication setup failed: ' + e.message + '. Please refresh the page.');
+  }
 }
 
 async function doLogin() {
   if (IS_DEMO) return;
   try {
-    await msalApp.loginRedirect({ scopes: SCOPES });
+    // loginPopup keeps you on the same page — no redirect/reload issues
+    const resp = await msalApp.loginPopup({ scopes: SCOPES });
+    if (resp && resp.account) signIn(resp.account);
   } catch(e) {
     console.error('Login error:', e);
-    showLoginError('Sign-in error: ' + (e.message || e));
+    if (e.errorCode === 'popup_window_error' || e.message?.includes('popup')) {
+      showLoginError('Popup was blocked. Please allow popups for this site and try again.');
+    } else if (e.errorCode === 'user_cancelled') {
+      // user closed the popup — do nothing
+    } else {
+      showLoginError('Sign-in failed: ' + (e.message || e));
+    }
   }
 }
 
@@ -560,7 +572,7 @@ function showLoginError(msg) {
 function doLogout() {
   currentUser = null;
   if (!IS_DEMO && msalApp) {
-    msalApp.logoutRedirect({ postLogoutRedirectUri: REDIRECT_URI });
+    msalApp.logoutPopup({ postLogoutRedirectUri: REDIRECT_URI });
   } else {
     document.getElementById('appWrap').style.display = 'none';
     document.getElementById('loginScreen').style.display = 'flex';
@@ -1664,7 +1676,7 @@ window.addEventListener('load', function () {
           authority:   `https://login.microsoftonline.com/${TENANT_ID}`,
           redirectUri: REDIRECT_URI
         },
-        cache: { cacheLocation: 'sessionStorage', storeAuthStateInCookie: false }
+        cache: { cacheLocation: 'localStorage', storeAuthStateInCookie: true }
       });
     } catch (e) {
       console.error('MSAL PublicClientApplication failed:', e);
