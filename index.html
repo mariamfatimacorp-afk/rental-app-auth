@@ -520,30 +520,26 @@ async function init() {
   }
   try {
     await msalApp.initialize();
-    // Popup flow: no redirect response to handle, just check cached accounts
+    // Handle redirect response after Microsoft login returns to this page
+    const resp = await msalApp.handleRedirectPromise();
+    if (resp?.account) { signIn(resp.account); return; }
+    // Check for already-cached account (returning user)
     const accounts = msalApp.getAllAccounts();
     if (accounts.length > 0) { signIn(accounts[0]); return; }
   } catch(e) {
     console.error('MSAL init error:', e);
-    showLoginError('Authentication setup failed: ' + e.message + '. Please refresh the page.');
+    showLoginError('Authentication error: ' + e.message + '. Please refresh and try again.');
   }
 }
 
 async function doLogin() {
   if (IS_DEMO) return;
   try {
-    // loginPopup keeps you on the same page — no redirect/reload issues
-    const resp = await msalApp.loginPopup({ scopes: SCOPES });
-    if (resp && resp.account) signIn(resp.account);
+    // Use redirect (not popup) — GitHub Pages sets COOP headers that block popup messaging
+    await msalApp.loginRedirect({ scopes: SCOPES });
   } catch(e) {
     console.error('Login error:', e);
-    if (e.errorCode === 'popup_window_error' || e.message?.includes('popup')) {
-      showLoginError('Popup was blocked. Please allow popups for this site and try again.');
-    } else if (e.errorCode === 'user_cancelled') {
-      // user closed the popup — do nothing
-    } else {
-      showLoginError('Sign-in failed: ' + (e.message || e));
-    }
+    showLoginError('Sign-in failed: ' + (e.message || e));
   }
 }
 
@@ -578,7 +574,7 @@ function showLoginError(msg) {
 function doLogout() {
   currentUser = null;
   if (!IS_DEMO && msalApp) {
-    msalApp.logoutPopup({ postLogoutRedirectUri: REDIRECT_URI });
+    msalApp.logoutRedirect({ postLogoutRedirectUri: REDIRECT_URI });
   } else {
     document.getElementById('appWrap').style.display = 'none';
     document.getElementById('loginScreen').style.display = 'flex';
@@ -620,11 +616,9 @@ async function loadApplications() {
     } else {
       // ── Mode B: PDF folder in SharePoint Documents library ────────────────────
       // Path: Documents > Rental Applications > Rental Applications PDFs
-      // $expand=listItem fetches saved metadata (PM, Status, Notes) alongside each file
       const res = await fetch(
         `https://graph.microsoft.com/v1.0/sites/${SP_SITE}/drive/root:/${encodeURIComponent(SP_FOLDER).replace(/%2F/g,'/')}:/children` +
-        `?$select=id,name,createdDateTime,webUrl,lastModifiedDateTime` +
-        `&$expand=listItem($select=fields)&$top=200`,
+        `?$select=id,name,createdDateTime,webUrl,lastModifiedDateTime&$top=200`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
       if (!res.ok) {
@@ -678,19 +672,16 @@ function fileToDraftApp(f) {
   if (parts.length >= 4 && /rentalapplication/i.test(parts[parts.length - 1])) {
     propertyAddress = parts.slice(2, parts.length - 1).join(' ').trim();
   }
-  // Read any previously saved metadata from the SharePoint listItem fields
-  const saved = f.listItem?.fields || {};
-  const savedPM     = saved.App_PM     || saved.PM_Email || '';
-  const savedStatus = saved.App_Status || saved.Status   || 'new';
-  const savedNotes  = saved.App_Notes  || saved.Notes    || '';
+  // Read any previously saved metadata from localStorage (persisted across sessions)
+  const saved = appMeta(f.id);
 
   return {
     id: f.id, spId: f.id,
     submittedAt: f.createdDateTime ? f.createdDateTime.split('T')[0] : '',
-    status: savedStatus, pmEmail: savedPM, pdfUrl: f.webUrl || '', notes: savedNotes,
+    status: saved.status || 'new', pmEmail: saved.pmEmail || '', pdfUrl: f.webUrl || '', notes: saved.notes || '',
     name: name || f.name.replace(/\.pdf$/i, ''),
-    // All structured fields start empty — full data is inside the PDF (click View PDF)
-    propertyAddress: saved.App_Address || propertyAddress, propertyManager: saved.App_PM_Name || '', desiredOccupancy: '', maxOccupants: '', adults: '', children: '',
+    // Structured fields empty — full data inside the PDF (click View Full Application)
+    propertyAddress: saved.propertyAddress || propertyAddress, propertyManager: saved.pmName || '', desiredOccupancy: '', maxOccupants: '', adults: '', children: '',
     sin: '', email: '', phone1: '', phone2: '', dob: '', currentAddress: '',
     coName: '', coSIN: '', coEmail: '', coPhone1: '', coPhone2: '', coCurrentAddress: '', coDob: '',
     prevLandlordName: '', prevLandlordPhone: '', prevAddress: '', prevStay: '', prevRent: '', prevReason: '',
@@ -1208,11 +1199,25 @@ function selApp(id) {
     </div>`;
 }
 
+// ── APP METADATA (localStorage) ───────────────────────────────────────────────
+// Persists PM assignment, status, notes across sessions keyed by SharePoint file ID
+function appMeta(fileId, updates) {
+  const key = 'appmeta_' + fileId;
+  const existing = JSON.parse(localStorage.getItem(key) || '{}');
+  if (updates) {
+    const merged = { ...existing, ...updates };
+    localStorage.setItem(key, JSON.stringify(merged));
+    return merged;
+  }
+  return existing;
+}
+
 async function setStatus(id, s) {
   const a = apps.find(x => String(x.id) === String(id));
   if (!a) return;
   a.status = s;
-  if (a.spId) await patchSP(a.spId, { App_Status: s });
+  appMeta(a.id, { status: s }); // persist locally
+  if (a.spId) patchSP(a.spId, { App_Status: s }).catch(() => {}); // best-effort SP sync
   renderList();
   selApp(id);
   toast(s === 'approved' ? 'Application approved' : 'Marked as ' + s, s === 'approved' ? 'ok' : '');
@@ -1223,8 +1228,9 @@ async function assignPM(id, pmEmail) {
   if (!a) return;
   a.pmEmail = pmEmail;
   a.propertyManager = PM_NAMES[pmEmail] || '';
-  if (a.spId) await patchSP(a.spId, { App_PM: pmEmail, App_PM_Name: PM_NAMES[pmEmail] || '' });
-  renderList(); // refresh list card to show PM tag
+  appMeta(a.id, { pmEmail, pmName: PM_NAMES[pmEmail] || '' }); // persist locally
+  if (a.spId) patchSP(a.spId, { App_PM: pmEmail }).catch(() => {}); // best-effort SP sync
+  renderList();
   toast(pmEmail ? `Assigned to ${PM_NAMES[pmEmail] || pmEmail}` : 'PM unassigned', 'ok');
 }
 
