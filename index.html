@@ -9,6 +9,8 @@
 </script>
 <script src="https://unpkg.com/html-docx-js/dist/html-docx.js" defer></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" defer></script>
+<script src="https://cdn.jsdelivr.net/npm/pizzip@3.1.4/dist/pizzip.min.js" defer></script>
+<script src="https://cdn.jsdelivr.net/npm/docxtemplater@3.47.0/build/docxtemplater.js" defer></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -454,10 +456,14 @@ const REDIRECT_URI = 'https://mariamfatimacorp-afk.github.io/rental-app-auth/';
 const SP_SITE   = 'mfocorp.sharepoint.com,58eef16b-dfbf-4d68-aca5-0ac7eaca6668,5b1ededb-8b61-4412-895b-f13c59c131d4';
 
 // Folder path inside the Documents library where Power Automate saves rental application PDFs
-const SP_FOLDER = 'Rental Applications/Rental Applications PDFs/Rental Applications';
+const SP_FOLDER = 'Rental Applications/Rental Applications PDFs';
 
 // Optional: set this to a SharePoint list GUID once you add a structured list to Power Automate
 const SP_LIST   = 'YOUR_APPLICATIONS_LIST_ID';
+
+// Path to the Word lease template inside Documents library (create this file in SharePoint)
+// Template must use {{placeholder}} tags — see buildLeaseTemplateData() for all available tags
+const LEASE_TEMPLATE_PATH = 'Rental Applications/Lease_Template.docx';
 // ─────────────────────────────────────────────────────────────────────────────
 
 const IS_DEMO    = false;
@@ -595,7 +601,9 @@ async function getToken() {
 // ── SHAREPOINT ────────────────────────────────────────────────────────────────
 async function loadApplications() {
   if (!SP_READY) { renderList(); return; }
-  const loadingMsg = toast('Loading applications from SharePoint…');
+  apps = []; // always clear before loading so mock/stale data never shows
+  renderList(); // show empty state while loading
+  toast('Loading applications from SharePoint…');
   try {
     const token = await getToken();
 
@@ -627,29 +635,52 @@ async function loadApplications() {
       apps = pdfs.length ? pdfs.map(fileToDraftApp) : [];
     }
 
-    toast('Applications loaded', 'ok');
+    toast('Applications loaded (' + apps.length + ')', 'ok');
   } catch(e) {
     console.error('SharePoint load error:', e);
-    toast('⚠ SharePoint error: ' + e.message);
+    // Show error inline in the list panel so it can't be missed
+    const panel = document.getElementById('alist');
+    if (panel) {
+      panel.innerHTML = `<div style="padding:24px;color:#c0392b;background:#fdf0ee;border-radius:8px;margin:16px;">
+        <strong>⚠ SharePoint connection failed</strong><br><br>
+        <code style="font-size:12px;word-break:break-all">${e.message}</code><br><br>
+        <small>Check: SP_FOLDER path · Graph API permissions · SharePoint site access</small>
+        <br><br><button onclick="loadApplications()" style="margin-top:8px;padding:6px 16px;border-radius:6px;border:1px solid #c0392b;background:#fff;cursor:pointer;color:#c0392b">↻ Retry</button>
+      </div>`;
+    }
+    toast('⚠ SharePoint error — see dashboard for details');
   }
   renderList();
 }
 
 // Convert a SharePoint drive file (PDF) into an app object for the dashboard
 function fileToDraftApp(f) {
-  // Clean filename: strip .pdf extension + common date prefixes (e.g. "2026-05-23 - " or "20260523_")
-  const base = f.name
-    .replace(/\.pdf$/i, '')
-    .replace(/^\d{4}[-_./]\d{2}[-_./]\d{2}[\s_\-–]+/, '')
-    .replace(/^\d{8}[\s_\-–]+/, '')
-    .trim();
+  // Filename pattern: FirstName_LastName_Address_RentalApplication.pdf
+  // Extract applicant name from the first two underscore-separated segments
+  let name = f.name.replace(/\.pdf$/i, '');
+  const parts = name.split('_');
+  // If filename ends with "RentalApplication" use first two parts as name
+  if (parts.length >= 3 && /rentalapplication/i.test(parts[parts.length - 1])) {
+    name = (parts[0] + ' ' + parts[1]).replace(/\s+/g, ' ').trim();
+  } else {
+    // fallback: strip date prefixes
+    name = name
+      .replace(/^\d{4}[-_./]\d{2}[-_./]\d{2}[\s_\-–]+/, '')
+      .replace(/^\d{8}[\s_\-–]+/, '')
+      .trim();
+  }
+  // Extract address: everything between 2nd and last underscore segments
+  let propertyAddress = '';
+  if (parts.length >= 4 && /rentalapplication/i.test(parts[parts.length - 1])) {
+    propertyAddress = parts.slice(2, parts.length - 1).join(' ').trim();
+  }
   return {
     id: f.id, spId: f.id,
     submittedAt: f.createdDateTime ? f.createdDateTime.split('T')[0] : '',
     status: 'new', pmEmail: '', pdfUrl: f.webUrl || '', notes: '',
-    name: base || f.name.replace(/\.pdf$/i, ''),
+    name: name || f.name.replace(/\.pdf$/i, ''),
     // All structured fields start empty — filled via View PDF or future list integration
-    propertyAddress: '', propertyManager: '', desiredOccupancy: '', maxOccupants: '', adults: '', children: '',
+    propertyAddress: propertyAddress, propertyManager: '', desiredOccupancy: '', maxOccupants: '', adults: '', children: '',
     sin: '', email: '', phone1: '', phone2: '', dob: '', currentAddress: '',
     coName: '', coSIN: '', coEmail: '', coPhone1: '', coPhone2: '', coCurrentAddress: '', coDob: '',
     prevLandlordName: '', prevLandlordPhone: '', prevAddress: '', prevStay: '', prevRent: '', prevReason: '',
@@ -754,7 +785,8 @@ async function patchSP(spId, fields) {
   } catch(e) { console.warn('SharePoint PATCH failed:', e); }
 }
 
-// ── FALLBACK DATA ─────────────────────────────────────────────────────────────
+// ── APPLICATION DATA ──────────────────────────────────────────────────────────
+// Populated from SharePoint on login. Empty until loaded.
 let apps = [
   {
     id: 1, spId: null,
@@ -1245,7 +1277,7 @@ function setUnitDefaults() {
 
 function getLeaseData() {
   const addr  = document.getElementById('f_addr').value.trim();
-  const utype = document.querySelector('input[name="utype"]:checked').value;
+  const utype = document.querySelector('input[name="utype"]:checked')?.value || 'upper';
   const appliances = [...document.querySelectorAll('.ap:checked')].map(c => c.value).join(', ');
   const agdate = document.getElementById('f_agdate').value;
   const start  = document.getElementById('f_start').value;
@@ -1282,31 +1314,179 @@ function getLeaseData() {
     pets, petDesc, snow, yardMaint, garbage };
 }
 
-// ── DOCX GENERATION ───────────────────────────────────────────────────────────
-function doGenDOCX() {
-  const d = getLeaseData();
+// ── DOCX GENERATION (template-based via docxtemplater) ───────────────────────
+async function doGenDOCX() {
+  let d;
+  try { d = getLeaseData(); } catch(e) { toast('⚠ Form error: ' + e.message); return; }
   if (!d) return;
-  if (typeof htmlDocx === 'undefined') { toast('Word library not loaded — try PDF instead'); return; }
-  const html = buildLeaseHTML(d);
-  const blob = htmlDocx.asBlob(html, { orientation: 'portrait', margins: { top: 1440, right: 1296, bottom: 1440, left: 1440 } });
+
+  // Prefer SharePoint template if docxtemplater is loaded
+  if (typeof PizZip !== 'undefined' && typeof Docxtemplater !== 'undefined') {
+    try {
+      await generateLeaseFromTemplate(d);
+      return;
+    } catch(e) {
+      console.warn('Template generation failed, falling back to HTML export:', e);
+      toast('⚠ Template not found — using built-in format instead');
+    }
+  }
+
+  // Fallback: html-docx-js
+  if (typeof htmlDocx === 'undefined') {
+    toast('⚠ Word library not loaded yet — please wait a moment and try again'); return;
+  }
+  try {
+    const html = buildLeaseHTML(d);
+    const blob = htmlDocx.asBlob(html, { orientation: 'portrait', margins: { top: 1440, right: 1296, bottom: 1440, left: 1440 } });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href = url;
+    const utypeLabel = d.utype === 'upper' ? 'Upper' : d.utype === 'basement' ? 'Basement' : 'House';
+    a.download = `Lease_${utypeLabel}_${(d.tenants[0] || 'Tenant').replace(/ /g,'_')}.docx`;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+    closeModal();
+    toast('Lease downloaded!', 'ok');
+  } catch(e) {
+    console.error('DOCX fallback error:', e);
+    toast('⚠ Word generation failed: ' + e.message);
+  }
+}
+
+async function generateLeaseFromTemplate(d) {
+  toast('Fetching lease template from SharePoint…');
+  const token = await getToken();
+  const encodedPath = LEASE_TEMPLATE_PATH.split('/').map(encodeURIComponent).join('/');
+  const res = await fetch(
+    `https://graph.microsoft.com/v1.0/sites/${SP_SITE}/drive/root:/${encodedPath}:/content`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  if (!res.ok) throw new Error(`Template fetch failed: HTTP ${res.status}. Upload Lease_Template.docx to SharePoint → ${LEASE_TEMPLATE_PATH}`);
+
+  const arrayBuf = await res.arrayBuffer();
+  const zip = new PizZip(arrayBuf);
+  const doc = new Docxtemplater(zip, {
+    paragraphLoop: true,
+    linebreaks: true,
+    nullGetter: () => ''
+  });
+
+  doc.render(buildLeaseTemplateData(d));
+
+  const blob = doc.getZip().generate({
+    type: 'blob',
+    mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+  });
   const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
+  const a   = document.createElement('a');
   a.href = url;
   const utypeLabel = d.utype === 'upper' ? 'Upper' : d.utype === 'basement' ? 'Basement' : 'House';
-  a.download = `Lease_${utypeLabel}_${d.tenants[0].replace(/ /g,'_')}.docx`;
+  a.download = `Lease_${utypeLabel}_${(d.tenants[0] || 'Tenant').replace(/ /g,'_')}.docx`;
   document.body.appendChild(a); a.click(); a.remove();
   URL.revokeObjectURL(url);
   closeModal();
-  toast('Word document downloaded!', 'ok');
+  toast('Lease downloaded from template!', 'ok');
+}
+
+// Builds the data object that fills {{placeholders}} in the Word lease template.
+// Every {{tag}} used in the template must appear here.
+function buildLeaseTemplateData(d) {
+  const fmt = n => '$' + Number(n).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const longDate   = s => new Date(s + 'T12:00:00').toLocaleDateString('en-CA', { month: 'long', day: 'numeric', year: 'numeric' });
+  const signDate   = s => { const dt = new Date(s + 'T12:00:00'), day = dt.getDate(); const suf = [11,12,13].includes(day%100)?'th':['th','st','nd','rd','th'][Math.min(day%10,4)]; return `${day}${suf} day of ${dt.toLocaleDateString('en-CA',{month:'long'})}, ${dt.getFullYear()}`; };
+  const upperDate  = s => new Date(s+'T12:00:00').toLocaleDateString('en-CA',{day:'numeric',month:'long',year:'numeric'}).toUpperCase();
+
+  const uFull  = (d.utype==='upper'?'Upper Unit, ':d.utype==='basement'?'Basement Unit, ':'') + d.addr;
+  const uShare = d.utype==='upper'?'65':'35';
+  const uOther = d.utype==='upper'?'35':'65';
+  const uWord  = d.utype==='upper'?'upstairs':d.utype==='basement'?'basement':'entire house';
+  const uWordO = d.utype==='upper'?'basement':'upstairs';
+
+  const utilitiesClause = d.utils==='included'
+    ? 'The rental rate INCLUDES all utility costs. The Landlord is responsible for electricity, gas, water, sewer, and garbage services.'
+    : d.utils==='tenant'
+    ? 'The rental rate DOES NOT include utilities. The Tenant shall pay 100% of all utility costs directly.'
+    : d.utils==='other'
+    ? (d.utilCustom || 'Utility payment terms are as separately agreed between Landlord and Tenant.')
+    : `The rental rate DOES NOT include utilities. The ${uWord} tenant shall pay ${uShare}% and the ${uWordO} tenant shall pay ${uOther}% of the total monthly utility bill.`;
+
+  const petClause = d.pets==='yes' && d.petDesc
+    ? `Tenant is permitted to keep ${d.petDesc} in the premises, subject to keeping the premises clean and free of damage, controlling noise and odours, and complying with all applicable City of Calgary bylaws.`
+    : 'Tenant is not allowed to keep any pets in the property without the prior written approval of the Landlord.';
+
+  function accText(area, val) {
+    return { upper:`The ${area} is for the exclusive use of the upstairs tenant only.`, basement:`The ${area} is for the exclusive use of the basement tenant only.`, shared:`The ${area} is shared between the upstairs and basement tenants.`, house:`The ${area} is included with the leased premises for the Tenant's exclusive use.`, none:`The Tenant does not have access to the ${area} without prior written approval from the Landlord.`, na:'' }[val] || '';
+  }
+  const accessLines = [accText('parking and driveway',d.accParking), accText('backyard',d.accBackyard), accText('garage',d.accGarage), d.accLaundry!=='na'?accText('laundry facilities',d.accLaundry):'', d.accStorage!=='na'?accText('storage area',d.accStorage):''].filter(Boolean);
+
+  const snowClause = {both:'The upstairs tenant is responsible for clearing snow from the front sidewalk. The basement tenant is responsible for clearing snow from the basement entrance.', upper:'The upstairs tenant is responsible for clearing snow from the front sidewalk.', basement:'The basement tenant is responsible for clearing snow from the basement entrance.', tenant:'The Tenant is responsible for clearing snow from all areas of the property.', landlord:'Snow removal is the responsibility of the Landlord.'}[d.snow] || '';
+  const yardClause = {tenant:'Yard maintenance including lawn mowing and general upkeep is the responsibility of the Tenant.', landlord:'Yard maintenance is the responsibility of the Landlord.', shared:'Yard maintenance responsibilities are shared between tenants as directed by the Landlord.'}[d.yardMaint] || '';
+  const garbageClause = {tenant:'The Tenant is responsible for managing garbage and recycling bins including putting them out and bringing them in on collection days.', landlord:'Garbage and recycling bin management is the responsibility of the Landlord.', shared:'Garbage and recycling bin management is shared between tenants.'}[d.garbage] || '';
+
+  return {
+    // ── Dates ──────────────────────────────────────────────────────────────
+    agreement_date:       signDate(d.agdate),
+    agreement_date_upper: upperDate(d.agdate),
+    start_date:           longDate(d.start),
+    end_date:             longDate(d.end),
+    // ── Parties ────────────────────────────────────────────────────────────
+    tenant_name:          d.tenants[0] || '',
+    tenant_name_2:        d.tenants[1] || '',
+    tenant_name_3:        d.tenants[2] || '',
+    tenant_names:         d.tenants.join(' AND '),
+    landlord_name:        d.land,
+    landlord_address:     d.laddr,
+    landlord_email:       d.lemail,
+    // ── Property ───────────────────────────────────────────────────────────
+    property_address:     d.addr,
+    full_unit_address:    uFull,
+    unit_type:            d.utype,
+    unit_word:            uWord,
+    unit_word_other:      uWordO,
+    // ── Financial ──────────────────────────────────────────────────────────
+    rent:                 fmt(d.rent),
+    deposit:              fmt(d.dep),
+    late_fee:             fmt(d.late),
+    rerental_fee:         fmt(d.rerent),
+    // ── Utility shares ─────────────────────────────────────────────────────
+    utility_share:        uShare,
+    utility_other_share:  uOther,
+    utilities_clause:     utilitiesClause,
+    // ── Unit specifics ─────────────────────────────────────────────────────
+    appliances:           d.appliances || 'as currently installed',
+    max_occupants:        String(d.occ || ''),
+    // ── Other terms ────────────────────────────────────────────────────────
+    pet_clause:           petClause,
+    access_clause:        accessLines.join(' '),
+    snow_clause:          snowClause,
+    yard_clause:          yardClause,
+    garbage_clause:       garbageClause,
+    // ── Signature line date ────────────────────────────────────────────────
+    sign_date:            upperDate(d.agdate),
+    // ── Applicant info (from the application card if opened from one) ──────
+    applicant_name:       d.app?.name || '',
+    applicant_email:      d.app?.email || '',
+    applicant_phone:      d.app?.phone1 || '',
+  };
 }
 
 // ── PDF GENERATION ────────────────────────────────────────────────────────────
 function doGenPDF() {
-  const d = getLeaseData();
+  let d;
+  try { d = getLeaseData(); } catch(e) { toast('⚠ Form error: ' + e.message); return; }
   if (!d) return;
-  buildPDF(d);
-  closeModal();
-  toast('PDF downloaded!', 'ok');
+  if (typeof window.jspdf === 'undefined') {
+    toast('⚠ PDF library not loaded yet — please wait a moment and try again');
+    return;
+  }
+  try {
+    buildPDF(d);
+    closeModal();
+    toast('PDF downloaded!', 'ok');
+  } catch(e) {
+    console.error('PDF generation error:', e);
+    toast('⚠ PDF generation failed: ' + e.message);
+  }
 }
 
 // ── LEASE HTML TEMPLATE ───────────────────────────────────────────────────────
