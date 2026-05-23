@@ -1277,6 +1277,40 @@ function appMeta(fileId, updates) {
 // and parses the rental application form fields using regex patterns.
 // Results are cached in appMeta so the PDF is only fetched once per application.
 
+// Match a free-text PM name from the PDF to one of the known PM_OPTIONS entries.
+// Uses keyword matching so typos / partial names still resolve correctly.
+function matchPmByName(rawName) {
+  if (!rawName) return null;
+  const n = rawName.toLowerCase().replace(/[^a-z\s]/g, '').trim();
+
+  // Build keyword sets for each PM option
+  const matchers = [
+    {
+      email: 'umairlasi@gmail.com',
+      name:  'Umair Lasi',
+      // Matches: "umair", "lasi", "omer", "lassi" (speech-to-text variants)
+      words: ['umair', 'lasi', 'omer', 'omar', 'lassi'],
+    },
+    {
+      email: 't.alhabbal@gmail.com',
+      name:  'Tamer Alhabbal',
+      // Matches: "tamer", "tamir", "alhabbal", "alabal", "habbal"
+      words: ['tamer', 'tamir', 'alhabbal', 'alabal', 'habbal', 'al habbal'],
+    },
+    {
+      email: 'polypro786@gmail.com',
+      name:  'Syed / Mariam',
+      // Matches: "syed", "mariam", "syed/mariam", "mariam/syed"
+      words: ['syed', 'mariam'],
+    },
+  ];
+
+  for (const pm of matchers) {
+    if (pm.words.some(w => n.includes(w))) return pm;
+  }
+  return null;
+}
+
 function initPdfJs() {
   if (typeof pdfjsLib !== 'undefined' && !pdfjsLib.GlobalWorkerOptions.workerSrc) {
     pdfjsLib.GlobalWorkerOptions.workerSrc =
@@ -1321,9 +1355,21 @@ async function extractPdfData(app) {
     fields.pdfParsed  = true;
     fields.pdfRawText = rawText.slice(0, 8000); // cache truncated raw text
 
+    // Auto-assign PM if the PDF names one and none is manually set yet
+    if (!app.pmEmail && fields.propertyManager) {
+      const matched = matchPmByName(fields.propertyManager);
+      if (matched) {
+        fields.pmEmail      = matched.email;
+        fields.pmName       = matched.name;
+        app.pmEmail         = matched.email;
+        app.propertyManager = matched.name;
+      }
+    }
+
     // Merge extracted data into live app object
     Object.assign(app, fields);
     appMeta(app.id, fields);
+    renderList(); // update sidebar card PM tag
 
     // Re-render detail with full data
     selApp(app.id);
