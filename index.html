@@ -619,11 +619,10 @@ async function loadApplications() {
 
     } else {
       // ── Mode B: PDF folder in SharePoint Documents library ────────────────────
-      // Path: Documents > Rental Applications > Rental Applications PDFs > Rental Applications
+      // Path: Documents > Rental Applications > Rental Applications PDFs
       const res = await fetch(
         `https://graph.microsoft.com/v1.0/sites/${SP_SITE}/drive/root:/${encodeURIComponent(SP_FOLDER).replace(/%2F/g,'/')}:/children` +
-        `?$select=id,name,createdDateTime,webUrl,lastModifiedDateTime` +
-        `&$orderby=createdDateTime desc&$top=200`,
+        `?$select=id,name,createdDateTime,webUrl,lastModifiedDateTime&$top=200`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
       if (!res.ok) {
@@ -631,7 +630,10 @@ async function loadApplications() {
         throw new Error(err.error?.message || `HTTP ${res.status} — check the SP_FOLDER path`);
       }
       const data = await res.json();
-      const pdfs = (data.value || []).filter(f => f.name.toLowerCase().endsWith('.pdf'));
+      // Filter PDFs only, sort newest first client-side (Graph $orderby not supported on this endpoint)
+      const pdfs = (data.value || [])
+        .filter(f => f.name.toLowerCase().endsWith('.pdf'))
+        .sort((a, b) => new Date(b.createdDateTime) - new Date(a.createdDateTime));
       apps = pdfs.length ? pdfs.map(fileToDraftApp) : [];
     }
 
