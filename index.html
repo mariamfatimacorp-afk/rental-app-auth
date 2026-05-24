@@ -55,7 +55,27 @@ aside{width:300px;background:var(--card);border-right:1px solid var(--bdr);displ
 .b-approved{background:#D1FAE5;color:#065F46}
 .b-declined{background:#FEE2E2;color:#991B1B}
 .acard-sub{font-size:11px;color:var(--mut);display:flex;gap:8px;margin-top:2px;flex-wrap:wrap}
-.pm-tag{display:inline-block;padding:1px 6px;border-radius:6px;font-size:10px;font-weight:600;background:#EDE9FE;color:#5B21B6;border:1px solid #DDD6FE}
+.pm-tag{display:inline-block;padding:2px 8px;border-radius:6px;font-size:10px;font-weight:700;border:1px solid}
+.pm-ul{background:#DBEAFE;color:#1E40AF;border-color:#93C5FD}
+.pm-ta{background:#D1FAE5;color:#065F46;border-color:#6EE7B7}
+.pm-sm{background:#FEF3C7;color:#92400E;border-color:#FCD34D}
+.pm-none{background:#F3F4F6;color:#6B7280;border-color:#D1D5DB}
+/* Status pills */
+.sts-bar{display:flex;align-items:center;gap:5px;margin-bottom:14px;flex-wrap:wrap;padding:10px 14px;background:var(--card);border:1px solid var(--bdr);border-radius:8px}
+.sts-lbl{font-size:10px;font-weight:700;color:var(--mut);text-transform:uppercase;letter-spacing:.5px;margin-right:4px}
+.sts-pill{padding:4px 13px;border-radius:16px;font-size:11px;font-weight:700;cursor:pointer;border:1.5px solid transparent;transition:.15s;background:transparent}
+.sts-pill.s-new{color:#1D4ED8;border-color:#BFDBFE;background:#EFF6FF}
+.sts-pill.s-new.on,.sts-pill.s-new:hover:not(.off){background:#1D4ED8;color:#fff;border-color:#1D4ED8}
+.sts-pill.s-reviewed{color:#92400E;border-color:#FDE68A;background:#FFFBEB}
+.sts-pill.s-reviewed.on,.sts-pill.s-reviewed:hover:not(.off){background:#D97706;color:#fff;border-color:#D97706}
+.sts-pill.s-approved{color:#065F46;border-color:#6EE7B7;background:#ECFDF5}
+.sts-pill.s-approved.on,.sts-pill.s-approved:hover:not(.off){background:#059669;color:#fff;border-color:#059669}
+.sts-pill.s-declined{color:#991B1B;border-color:#FECACA;background:#FFF1F2}
+.sts-pill.s-declined.on,.sts-pill.s-declined:hover:not(.off){background:#DC2626;color:#fff;border-color:#DC2626}
+.sts-pill.off{opacity:.35;cursor:default}
+/* Section divider inside scard */
+.sdiv{border-top:1px solid var(--bdr);margin:10px 0 8px}
+.sh2{font-size:10px;font-weight:700;color:var(--mut);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;margin-top:2px}
 main{flex:1;overflow-y:auto;padding:22px 24px}
 .empty{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;text-align:center;color:var(--mut);gap:10px}
 .empty svg{opacity:.25}
@@ -996,7 +1016,7 @@ function renderList() {
 
   document.getElementById('alist').innerHTML = shown.map(a => {
     const pmLabel = PM_NAMES[a.pmEmail] || a.propertyManager || '';
-    const pmTag = pmLabel ? `<span class="pm-tag">${pmLabel}</span>` : '';
+    const pmTag = pmLabel ? `<span class="pm-tag ${pmClass(a.pmEmail)}">${pmLabel}</span>` : '';
     return `<div class="acard ${String(selId) === String(a.id) ? 'sel' : ''}" onclick='selApp(${JSON.stringify(a.id)})'>
       <div class="acard-top">
         <span class="acard-name">${a.name}</span>
@@ -1017,6 +1037,14 @@ function setFilter(f) {
 }
 
 // ── DETAIL VIEW ───────────────────────────────────────────────────────────────
+function pmClass(email) {
+  const n = PM_NAMES[email];
+  if (n === 'Umair Lasi')     return 'pm-ul';
+  if (n === 'Tamer Alhabbal') return 'pm-ta';
+  if (n === 'Syed / Mariam')  return 'pm-sm';
+  return 'pm-none';
+}
+
 function selApp(id) {
   selId = id;
   renderList();
@@ -1026,230 +1054,246 @@ function selApp(id) {
   const d = document.getElementById('detail');
   d.style.display = 'block';
 
-  const totalIncome = (a.empWage || 0) + (parseFloat(a.coEmpWage) || 0);
+  const totalIncome = (Number(a.empWage) || 0) + (parseFloat(a.coEmpWage) || 0);
   const incomeRatio = totalIncome > 0 ? Math.round(totalIncome / 2500 * 100) : 0;
   const anyFlag = a.crBankruptcy === 'Yes' || a.crEviction === 'Yes' || a.crLatePayments === 'Yes' || a.crRefused === 'Yes';
-  const pmLabel = PM_NAMES[a.pmEmail] || a.propertyManager || '—';
+  const pmLabel = PM_NAMES[a.pmEmail] || a.propertyManager || '';
+  const isAdmin = currentUser?.role === 'admin';
+  const isPM    = currentUser?.role === 'pm';
+  const hasCoApp = !!a.coName;
+  const sid = JSON.stringify(a.id);
 
   function frow(lbl, val, cls='') {
-    return val ? `<div class="frow"><span class="flbl">${lbl}</span><span class="fval ${cls}">${val}</span></div>` : '';
+    const v = val !== undefined && val !== null && val !== '' ? String(val) : '';
+    return `<div class="frow"><span class="flbl">${lbl}</span><span class="fval ${cls}">${v || '<span style="color:var(--mut);font-weight:400">—</span>'}</span></div>`;
   }
   function yn(val) {
-    if (!val) return '';
-    return val === 'No' ? `<span class="tag tag-no">No</span>` : `<span class="tag tag-bad">Yes</span>`;
+    if (!val) return '<span style="color:var(--mut)">—</span>';
+    if (val === 'No')  return '<span class="tag tag-no">No</span>';
+    return '<span class="tag tag-bad">Yes ⚠</span>';
+  }
+  function ynGood(val) { // for insurance / consents where Yes is good
+    if (!val) return '<span style="color:var(--mut)">—</span>';
+    if (val === 'Yes') return '<span class="tag tag-no">Yes ✓</span>';
+    return '<span class="tag tag-bad">No</span>';
   }
   function creditRow(label, val) {
     return `<div class="credit-row"><span>${label}</span>${yn(val)}</div>`;
   }
-
-  const isAdmin = currentUser?.role === 'admin';
-  const hasCoApp = !!a.coName;
-  const hasRefs = a.ref1Name || a.ref2Name || a.ref3Name;
-  const hasEmg = !!a.emgName;
+  function pill(label, status) {
+    const on = a.status === status;
+    const canClick = isAdmin || (status === 'reviewed' && isPM);
+    return `<button class="sts-pill s-${status}${on?' on':''}${!canClick?' off':''}"
+      ${canClick ? `onclick='setStatus(${sid},"${status}")'` : 'disabled'}>${on?'●':'○'} ${label}</button>`;
+  }
+  function refCard(n, name, rel, phone) {
+    if (!name) return `<div class="frow"><span class="flbl">Reference ${n}</span><span class="fval" style="color:var(--mut);font-weight:400">—</span></div>`;
+    return `<div class="frow"><span class="flbl">Reference ${n}</span><span class="fval">${name}${rel?' · '+rel:''}${phone?' · '+phone:''}</span></div>`;
+  }
 
   d.innerHTML = `
-    <!-- PDF scan status banner (hidden once data loads) -->
-    <div id="pdfScanStatus" style="display:${a.pdfParsed ? 'none' : 'flex'};align-items:center;gap:10px;
+    <!-- PDF scan banner -->
+    <div id="pdfScanStatus" style="display:${a.pdfParsed?'none':'flex'};align-items:center;gap:10px;
          background:#EFF6FF;border:1px solid #BFDBFE;border-radius:8px;padding:10px 16px;
          margin-bottom:14px;font-size:12px;color:#1D4ED8">
       <span style="font-size:16px;animation:spin 1.2s linear infinite;display:inline-block">⏳</span>
-      <span>Reading PDF to extract applicant details — this happens once per application…</span>
+      <span>Reading PDF to extract all applicant fields — this happens once per application…</span>
     </div>
 
+    <!-- ── Header ── -->
     <div class="dhead">
       <div>
         <div class="dname">${a.name}</div>
-        <div class="dmeta">
-          <span>Applied ${a.submittedAt}</span>
-          <span class="pm-tag">${pmLabel !== '—' ? pmLabel : 'No PM assigned'}</span>
+        <div class="dmeta" style="margin-top:5px;gap:8px">
+          <span>Submitted ${a.submittedAt || '—'}</span>
+          <span class="pm-tag ${pmClass(a.pmEmail)}">${pmLabel || 'Unassigned'}</span>
         </div>
       </div>
       <div class="dacts">
-        ${a.pdfUrl ? `<a href="${a.pdfUrl}" target="_blank" rel="noopener noreferrer" class="btn btn-pri" title="View original rental application PDF">&#128196; View Full Application (PDF)</a>` : ''}
-        ${isAdmin && a.status !== 'declined' ? `<button class="btn btn-red" onclick='setStatus(${JSON.stringify(a.id)},"declined")'>Decline</button>` : ''}
-        ${isAdmin && a.status !== 'approved' ? `<button class="btn btn-grn" onclick='setStatus(${JSON.stringify(a.id)},"approved")'>&#10003; Approve</button>` : ''}
-        ${a.status === 'approved' ? '<span class="badge b-approved" style="font-size:12px;padding:5px 10px">&#10003; Approved</span>' : ''}
+        ${a.pdfUrl ? `<a href="${a.pdfUrl}" target="_blank" rel="noopener noreferrer" class="btn btn-pri">&#128196; View PDF</a>` : ''}
       </div>
     </div>
 
-    <!-- PM assignment + info notice -->
-    <div style="background:#f0f4ff;border:1px solid #c7d4f5;border-radius:8px;padding:12px 16px;margin-bottom:16px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
-      <div style="display:flex;align-items:center;gap:8px;flex:1">
-        <span style="font-size:13px;font-weight:600;color:#3a4a7a">Assign PM:</span>
-        <select id="pmAssignSelect" onchange='assignPM(${JSON.stringify(a.id)}, this.value)'
-          style="border:1px solid #c7d4f5;border-radius:6px;padding:4px 10px;font-size:13px;background:#fff">
-          <option value="">— Unassigned —</option>
-          ${PM_OPTIONS.map(({email, name}) =>
-            `<option value="${email}" ${PM_NAMES[a.pmEmail] === name ? 'selected' : ''}>${name}</option>`
-          ).join('')}
-        </select>
-      </div>
-      <div style="font-size:12px;color:#5a6a9a;flex:2">
-        &#128196; <strong>Full application data is in the PDF.</strong>
-        Click <em>View Full Application</em> to review all fields, employment details, references and signatures.
-      </div>
+    <!-- ── Status bar (all 4 states, always visible) ── -->
+    <div class="sts-bar">
+      <span class="sts-lbl">Status:</span>
+      ${pill('New','new')}
+      ${pill('Reviewed','reviewed')}
+      ${pill('Approved','approved')}
+      ${pill('Declined','declined')}
+      ${!isAdmin && !isPM ? '<span style="font-size:11px;color:var(--mut);margin-left:6px">Admins control status</span>' : ''}
     </div>
 
-    <!-- Row 1: Summary | Primary+Employment | Co-Applicant+Co-Employment -->
-    <div class="secgrid ${hasCoApp ? 'three' : ''}">
+    <!-- ── Assign PM ── -->
+    <div class="scard" style="margin-bottom:12px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+      <span style="font-size:12px;font-weight:700;color:var(--txt);white-space:nowrap">Assign Property Manager:</span>
+      <select id="pmAssignSelect" onchange='assignPM(${sid}, this.value)'
+        style="border:1px solid var(--bdr);border-radius:6px;padding:5px 10px;font-size:13px;background:var(--bg);color:var(--txt);flex:1;min-width:180px">
+        <option value="">— Unassigned —</option>
+        ${PM_OPTIONS.map(({email, name}) =>
+          `<option value="${email}" ${PM_NAMES[a.pmEmail] === name ? 'selected' : ''}>${name}</option>`
+        ).join('')}
+      </select>
+      <span style="font-size:11px;color:var(--mut)">Auto-assigned from PDF · override anytime</span>
+    </div>
+
+    <!-- ── Row 1: Property Details + Rental Profile ── -->
+    <div class="secgrid" style="margin-bottom:12px">
       <div class="scard">
-        <h3><span class="icon">🏠</span> Application Summary</h3>
-        ${frow('Property', a.propertyAddress)}
-        ${frow('Property Manager', pmLabel)}
-        ${frow('Desired Move-in', a.desiredOccupancy)}
+        <h3><span class="icon">🏠</span> Property &amp; Occupancy</h3>
+        ${frow('Property Address', a.propertyAddress)}
+        ${frow('Property Manager', a.propertyManager || pmLabel)}
+        ${frow('Desired Move-in Date', a.desiredOccupancy)}
         ${frow('Max Occupants', a.maxOccupants)}
         ${frow('Adults', a.adults)}
-        ${a.children ? frow('Children', a.children) : ''}
+        ${frow('Children', a.children)}
       </div>
-
       <div class="scard">
-        <h3><span class="icon">👤</span> Primary Applicant</h3>
-        ${frow('Name', a.name)}
-        ${frow('Date of Birth', a.dob)}
-        ${a.sin ? frow('SIN (optional)', a.sin) : ''}
-        ${frow('Email', a.email)}
-        ${frow('Phone 1', a.phone1)}
-        ${a.phone2 ? frow('Phone 2', a.phone2) : ''}
-        ${frow('Current Address', a.currentAddress)}
-        <div style="border-top:1px solid var(--bdr);margin:10px 0 8px"></div>
-        <h3 style="margin-bottom:8px"><span class="icon">💼</span> Employment</h3>
-        ${frow('Status', a.empStatus || '—')}
-        ${frow('Employer', a.empEmployer || '—')}
-        ${frow('Employer Address', a.empAddress || '—')}
-        ${frow('Position', a.empPosition || '—')}
-        ${frow('Length', a.empLength || '—')}
-        <div class="frow"><span class="flbl">Monthly Wage</span>
-          <span class="fval ${incomeRatio >= 250 ? 'good' : 'warn'}">
-            ${a.empWage ? '$' + a.empWage.toLocaleString() + ' ' + (incomeRatio >= 250 ? '✓' : '⚠') + ' (' + incomeRatio + '% of rent)' : '—'}
-          </span>
-        </div>
-        ${frow('Supervisor', a.empSupervisor || '—')}
-        ${frow('Supervisor Phone', a.empSupPhone || '—')}
-        ${frow('Other Income / Sources', a.empOther || '—')}
+        <h3><span class="icon">📋</span> Rental Profile</h3>
+        <div class="credit-row"><span>Has Pets?</span>${yn(a.hasPets)}</div>
+        ${a.petDesc ? frow('Pet Type / Description', a.petDesc) : ''}
+        <div class="credit-row"><span>Smoking in household?</span>${yn(a.smokes)}</div>
+        <div class="credit-row"><span>Tenant Insurance?</span>${ynGood(a.hasInsurance)}</div>
+        <div class="credit-row"><span>Joint Credit Check Consent?</span>${ynGood(a.jointCreditConsent)}</div>
       </div>
-
-      ${hasCoApp ? `<div class="scard">
-        <h3><span class="icon">👥</span> Co-Applicant</h3>
-        ${frow('Name', a.coName)}
-        ${a.coDob ? frow('Date of Birth', a.coDob) : ''}
-        ${a.coSIN ? frow('SIN (optional)', a.coSIN) : ''}
-        ${a.coEmail ? frow('Email', a.coEmail) : ''}
-        ${a.coPhone1 ? frow('Phone 1', a.coPhone1) : ''}
-        ${a.coPhone2 ? frow('Phone 2', a.coPhone2) : ''}
-        ${a.coCurrentAddress ? frow('Current Address', a.coCurrentAddress) : ''}
-        <div style="border-top:1px solid var(--bdr);margin:10px 0 8px"></div>
-        <h3 style="margin-bottom:8px"><span class="icon">💼</span> Co-Applicant Employment</h3>
-        ${frow('Employer', a.coEmpEmployer || '—')}
-        ${frow('Employer Address', a.coEmpAddress || '—')}
-        ${frow('Position', a.coEmpPosition || '—')}
-        ${frow('Length', a.coEmpLength || '—')}
-        ${frow('Monthly Wage', a.coEmpWage ? '$' + parseFloat(a.coEmpWage).toLocaleString() : '—')}
-        ${frow('Supervisor', a.coEmpSupervisor || '—')}
-        ${frow('Supervisor Phone', a.coEmpSupPhone || '—')}
-      </div>` : ''}
     </div>
 
-    <!-- Row 2: Previous Tenancy | Credit History | Additional Info -->
-    <div class="secgrid three">
+    <!-- ── Row 2: Primary Applicant | Primary Employment ── -->
+    <div class="secgrid" style="margin-bottom:12px">
+      <div class="scard">
+        <h3><span class="icon">👤</span> Primary Applicant</h3>
+        ${frow('Full Legal Name', a.name)}
+        ${frow('Date of Birth', a.dob)}
+        ${frow('SIN (optional)', a.sin)}
+        ${frow('Email', a.email)}
+        ${frow('Phone (Cell)', a.phone1)}
+        ${frow('Phone (Home/Alt)', a.phone2)}
+        ${frow('Current Address', a.currentAddress)}
+      </div>
+      <div class="scard">
+        <h3><span class="icon">💼</span> Primary Employment</h3>
+        ${frow('Employment Status', a.empStatus)}
+        ${frow('Employer', a.empEmployer)}
+        ${frow('Employer Address', a.empAddress)}
+        ${frow('Position / Title', a.empPosition)}
+        ${frow('Length of Employment', a.empLength)}
+        <div class="frow"><span class="flbl">Monthly Gross Income</span>
+          <span class="fval ${incomeRatio>0?(incomeRatio>=250?'good':'warn'):''}">
+            ${a.empWage ? '$' + Number(a.empWage).toLocaleString() + (incomeRatio>0?' ('+incomeRatio+'% of $2,500 rent)':'') : '<span style="color:var(--mut);font-weight:400">—</span>'}
+          </span>
+        </div>
+        ${frow('Supervisor Name', a.empSupervisor)}
+        ${frow('Supervisor Phone', a.empSupPhone)}
+        ${frow('Other Income / Sources', a.empOther)}
+      </div>
+    </div>
+
+    <!-- ── Row 3: Co-Applicant + Co-Employment (only if present) ── -->
+    ${hasCoApp ? `
+    <div class="secgrid" style="margin-bottom:12px">
+      <div class="scard">
+        <h3><span class="icon">👥</span> Co-Applicant</h3>
+        ${frow('Full Legal Name', a.coName)}
+        ${frow('Date of Birth', a.coDob)}
+        ${frow('SIN (optional)', a.coSIN)}
+        ${frow('Email', a.coEmail)}
+        ${frow('Phone (Cell)', a.coPhone1)}
+        ${frow('Phone (Home/Alt)', a.coPhone2)}
+        ${frow('Current Address', a.coCurrentAddress)}
+      </div>
+      <div class="scard">
+        <h3><span class="icon">💼</span> Co-Applicant Employment</h3>
+        ${frow('Employment Status', a.coEmpStatus)}
+        ${frow('Employer', a.coEmpEmployer)}
+        ${frow('Employer Address', a.coEmpAddress)}
+        ${frow('Position / Title', a.coEmpPosition)}
+        ${frow('Length of Employment', a.coEmpLength)}
+        ${frow('Monthly Gross Income', a.coEmpWage ? '$'+parseFloat(a.coEmpWage).toLocaleString() : '')}
+        ${frow('Supervisor Name', a.coEmpSupervisor)}
+        ${frow('Supervisor Phone', a.coEmpSupPhone)}
+        ${frow('Other Income / Sources', a.coEmpOther)}
+      </div>
+    </div>` : ''}
+
+    <!-- ── Row 4: Previous Tenancy | Credit History ── -->
+    <div class="secgrid" style="margin-bottom:12px">
       <div class="scard">
         <h3><span class="icon">🏡</span> Previous Tenancy</h3>
-        ${frow('Landlord', a.prevLandlordName)}
+        ${frow('Previous Address', a.prevAddress)}
+        ${frow('Landlord Name', a.prevLandlordName)}
         ${frow('Landlord Phone', a.prevLandlordPhone)}
-        ${frow('Address', a.prevAddress)}
         ${frow('Length of Stay', a.prevStay)}
-        ${frow('Monthly Rent', a.prevRent ? '$' + a.prevRent : '')}
+        ${frow('Monthly Rent', a.prevRent ? '$'+a.prevRent : '')}
         ${frow('Reason for Leaving', a.prevReason)}
       </div>
       <div class="scard">
-        <h3><span class="icon">📋</span> Credit History</h3>
-        ${creditRow('Declared bankruptcy (7 yrs)?', a.crBankruptcy)}
-        ${creditRow('Ever evicted?', a.crEviction)}
-        ${creditRow('2+ late payments (12 mo)?', a.crLatePayments)}
+        <h3><span class="icon">⚠️</span> Credit &amp; Background</h3>
+        ${creditRow('Declared bankruptcy (last 7 yrs)?', a.crBankruptcy)}
+        ${creditRow('Ever been evicted?', a.crEviction)}
+        ${creditRow('2+ late payments in last 12 months?', a.crLatePayments)}
         ${creditRow('Ever refused to pay rent?', a.crRefused)}
-        ${frow('Explanation (if YES answered)', a.crExplanation || '—')}
-        ${!anyFlag ? '<div style="margin-top:8px;font-size:11px;color:var(--grn);font-weight:600">✓ No credit flags</div>' : '<div style="margin-top:8px;font-size:11px;color:var(--ylw);font-weight:600">⚠ See flags above</div>'}
-      </div>
-      <div class="scard">
-        <h3><span class="icon">ℹ️</span> Additional Info</h3>
-        <div class="frow"><span class="flbl">Pets</span><span class="fval">${yn(a.hasPets)}</span></div>
-        ${frow('Pet Description', a.petDesc || '—')}
-        <div class="frow"><span class="flbl">Smoking</span><span class="fval">${yn(a.smokes)}</span></div>
-        <div class="frow"><span class="flbl">Has Insurance</span><span class="fval">${a.hasInsurance === 'Yes' ? '<span class="tag tag-no">Yes ✓</span>' : '<span class="tag tag-bad">No</span>'}</span></div>
-        <div class="frow"><span class="flbl">Joint Credit Consent</span><span class="fval">${yn(a.jointCreditConsent || 'No')}</span></div>
-      </div>
-    </div>
-
-    <!-- Declarations & Acknowledgements -->
-    <div class="secgrid" style="grid-template-columns:1fr;margin-bottom:12px">
-      <div class="scard">
-        <h3><span class="icon">✅</span> Declarations &amp; Acknowledgements</h3>
-        ${frow('Pets/Barbeques/Waterbeds/Aquariums require written permission', a.ackNoPetsPermission || '—')}
-        ${frow('Pet Damage Deposit of $300 if pet permitted', a.ackPetDeposit || '—')}
-        ${frow('Information declared true and correct', a.ackInfoTrue || '—')}
-        ${frow('Authorize landlord to obtain tenant/credit/employment info', a.ackAuthorizeObtain || '—')}
-        ${frow('Authorize reporting agencies to disclose relevant information', a.ackAuthorizeDisclose || '—')}
-      </div>
-    </div>
-
-    <!-- Row 3: References & Emergency (full width) -->
-    <div class="secgrid" style="grid-template-columns:1fr;margin-bottom:12px">
-      <div class="scard">
-        <h3><span class="icon">📞</span> References &amp; Emergency Contact</h3>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-          <div>
-            ${a.ref1Name ? frow('Ref 1', `${a.ref1Name} (${a.ref1Rel}) · ${a.ref1Phone}`) : '<div class="frow"><span class="flbl">References</span><span class="fval" style="color:var(--mut)">None provided</span></div>'}
-            ${a.ref2Name ? frow('Ref 2', `${a.ref2Name} (${a.ref2Rel}) · ${a.ref2Phone}`) : ''}
-            ${a.ref3Name ? frow('Ref 3', `${a.ref3Name} (${a.ref3Rel}) · ${a.ref3Phone}`) : ''}
-          </div>
-          <div>
-            ${hasEmg ? `
-              ${frow('Emergency Contact', a.emgName)}
-              ${frow('Relationship', a.emgRel)}
-              ${frow('Phone', a.emgPhone)}
-              ${a.emgAddress ? frow('Address', a.emgAddress) : ''}
-            ` : '<div class="frow"><span class="flbl">Emergency Contact</span><span class="fval" style="color:var(--mut)">None provided</span></div>'}
-          </div>
+        ${frow('Explanation (if any Yes)', a.crExplanation)}
+        <div style="margin-top:10px;padding:6px 10px;border-radius:6px;font-size:11px;font-weight:700;
+          background:${anyFlag?'#FEF9C3':'#D1FAE5'};color:${anyFlag?'#92400E':'#065F46'}">
+          ${anyFlag ? '⚠ Credit flags present — review explanation' : '✓ No credit flags reported'}
         </div>
       </div>
     </div>
 
-    <div class="secgrid" style="grid-template-columns:1fr">
-      <div class="scard">
-        <h3><span class="icon">📝</span> Review Notes</h3>
-        <textarea class="notes" id="notes_${a.id}">${a.notes}</textarea>
-        <button class="btn btn-out" style="margin-top:7px;font-size:11px" onclick='saveNotes(${JSON.stringify(a.id)})'>Save Notes to SharePoint</button>
-
-        <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--bdr)">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
-            <span style="font-size:11px;font-weight:700;color:var(--mut);text-transform:uppercase;letter-spacing:.5px">&#128196; Original Application PDF</span>
-            ${a.pdfUrl ? `<a href="${a.pdfUrl}" target="_blank" rel="noopener noreferrer" class="btn btn-acc" style="font-size:11px;padding:4px 10px">Open PDF &#8599;</a>` : ''}
-          </div>
-          ${isAdmin ? `
-            <div style="display:flex;gap:8px;align-items:center">
-              <input id="pdfUrl_${a.id}" type="url"
-                value="${a.pdfUrl || ''}"
-                placeholder="Paste SharePoint or OneDrive link to the applicant's PDF…"
-                style="flex:1;padding:7px 10px;border:1.5px solid var(--bdr);border-radius:6px;font-size:12px;color:var(--txt);background:var(--bg)">
-              <button class="btn btn-out" style="font-size:11px;white-space:nowrap" onclick='savePdfUrl(${JSON.stringify(a.id)})'>Save Link</button>
-            </div>
-            <span style="font-size:10px;color:var(--mut);margin-top:4px;display:block">
-              Link the original signed PDF from SharePoint so all team members can open it directly. Includes acknowledgements, signatures &amp; full income details.
-            </span>
-          ` : !a.pdfUrl ? `<span style="font-size:12px;color:var(--mut)">No PDF linked yet — ask an administrator to attach the original submission.</span>` : ''}
-        </div>
+    <!-- ── Row 5: Acknowledgements ── -->
+    <div class="scard" style="margin-bottom:12px">
+      <h3><span class="icon">✅</span> Declarations &amp; Acknowledgements</h3>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <div class="credit-row"><span>Pets/BBQ/Waterbeds require written permission</span>${ynGood(a.ackNoPetsPermission)}</div>
+        <div class="credit-row"><span>Pet damage deposit ($300) if pet permitted</span>${ynGood(a.ackPetDeposit)}</div>
+        <div class="credit-row"><span>Information declared true and correct</span>${ynGood(a.ackInfoTrue)}</div>
+        <div class="credit-row"><span>Authorize landlord to obtain credit/employment info</span>${ynGood(a.ackAuthorizeObtain)}</div>
+        <div class="credit-row"><span>Authorize reporting agencies to disclose information</span>${ynGood(a.ackAuthorizeDisclose)}</div>
       </div>
     </div>
 
+    <!-- ── Row 6: References | Emergency Contact ── -->
+    <div class="secgrid" style="margin-bottom:12px">
+      <div class="scard">
+        <h3><span class="icon">📞</span> References</h3>
+        ${refCard(1, a.ref1Name, a.ref1Rel, a.ref1Phone)}
+        ${refCard(2, a.ref2Name, a.ref2Rel, a.ref2Phone)}
+        ${refCard(3, a.ref3Name, a.ref3Rel, a.ref3Phone)}
+      </div>
+      <div class="scard">
+        <h3><span class="icon">🚨</span> Emergency Contact</h3>
+        ${frow('Name', a.emgName)}
+        ${frow('Relationship', a.emgRel)}
+        ${frow('Phone', a.emgPhone)}
+        ${frow('Address', a.emgAddress)}
+      </div>
+    </div>
+
+    <!-- ── Notes + PDF link ── -->
+    <div class="scard" style="margin-bottom:12px">
+      <h3><span class="icon">📝</span> Internal Review Notes</h3>
+      <textarea class="notes" id="notes_${a.id}" placeholder="Add internal notes about this application…">${a.notes||''}</textarea>
+      <div style="display:flex;gap:8px;margin-top:7px;align-items:center;flex-wrap:wrap">
+        <button class="btn btn-out" style="font-size:11px" onclick='saveNotes(${sid})'>Save Notes</button>
+        ${a.pdfUrl ? `<a href="${a.pdfUrl}" target="_blank" rel="noopener noreferrer" class="btn btn-acc" style="font-size:11px">Open Original PDF ↗</a>` : ''}
+      </div>
+      ${isAdmin ? `<div style="margin-top:10px;display:flex;gap:8px;align-items:center">
+        <input id="pdfUrl_${a.id}" type="url" value="${a.pdfUrl||''}" placeholder="Paste SharePoint PDF link…"
+          style="flex:1;padding:6px 10px;border:1.5px solid var(--bdr);border-radius:6px;font-size:12px;color:var(--txt);background:var(--bg)">
+        <button class="btn btn-out" style="font-size:11px;white-space:nowrap" onclick='savePdfUrl(${sid})'>Save Link</button>
+      </div>` : ''}
+    </div>
+
+    <!-- ── Generate Lease bar ── -->
     <div class="abar">
       <div class="abar-txt">
-        <strong>${a.status === 'approved' ? '✓ Ready to Generate Lease' : 'Generate Lease Agreement'}</strong>
-        <span>${a.status === 'approved'
-          ? 'This application is approved. Generate the Alberta Residential Tenancy Agreement.'
-          : 'Approve this application first, or generate a draft to review.'}</span>
+        <strong>${a.status==='approved'?'✓ Ready to Generate Lease':'Generate Lease Agreement'}</strong>
+        <span>${a.status==='approved'
+          ?'Application approved. Generate the Alberta Residential Tenancy Agreement now.'
+          :'Set status to Approved first, or generate a draft lease to review.'}</span>
       </div>
       <div class="abar-btns">
-        ${isAdmin && a.status !== 'approved' && a.status !== 'declined' ? `<button class="btn btn-out" onclick='setStatus(${JSON.stringify(a.id)},"reviewed")'>Mark Reviewed</button>` : ''}
-        <button class="btn btn-acc btn-lg" onclick='openModal(${JSON.stringify(a.id)})'>Generate Lease &rarr;</button>
+        <button class="btn btn-acc btn-lg" onclick='openModal(${sid})'>Generate Lease &rarr;</button>
       </div>
     </div>`;
 
@@ -1338,17 +1382,43 @@ async function extractPdfData(app) {
     const buffer = await res.arrayBuffer();
     const pdf    = await pdfjsLib.getDocument({ data: buffer }).promise;
 
-    // Extract text from every page, preserving reading order
+    // Pass 1: try to read PDF form field annotations (fillable PDFs)
+    const annFields = {};
+    for (let p = 1; p <= pdf.numPages; p++) {
+      const page  = await pdf.getPage(p);
+      const annots = await page.getAnnotations();
+      for (const ann of annots) {
+        if (ann.fieldName && ann.fieldValue !== undefined && ann.fieldValue !== '') {
+          annFields[ann.fieldName.toLowerCase().replace(/\s+/g,'_')] = String(ann.fieldValue);
+        }
+      }
+    }
+
+    // Pass 2: extract raw text from every page
     let rawText = '';
     for (let p = 1; p <= pdf.numPages; p++) {
       const page    = await pdf.getPage(p);
       const content = await page.getTextContent();
-      // Sort by Y (descending) then X (ascending) to reconstruct reading order
-      const items   = [...content.items].sort((a, b) => {
-        const dy = Math.round(b.transform[5] - a.transform[5]);
-        return dy !== 0 ? dy : a.transform[4] - b.transform[4];
-      });
-      rawText += items.map(i => i.str).join(' ') + '\n';
+      // Group by line (same Y position ±4pt), sort lines top-to-bottom, items left-to-right
+      const byLine = {};
+      for (const item of content.items) {
+        const y = Math.round(item.transform[5] / 4) * 4;
+        if (!byLine[y]) byLine[y] = [];
+        byLine[y].push(item);
+      }
+      const sortedLines = Object.keys(byLine).map(Number).sort((a,b)=>b-a);
+      for (const y of sortedLines) {
+        const line = byLine[y].sort((a,b) => a.transform[4]-b.transform[4]);
+        rawText += line.map(i => i.str).join(' ') + '\n';
+      }
+    }
+
+    // Prepend any annotation field values to rawText so regexes can find them
+    if (Object.keys(annFields).length > 0) {
+      const annText = Object.entries(annFields)
+        .map(([k,v]) => k.replace(/_/g,' ') + ': ' + v)
+        .join('\n');
+      rawText = annText + '\n\n' + rawText;
     }
 
     const fields = parseRentalAppText(rawText);
@@ -1386,108 +1456,218 @@ async function extractPdfData(app) {
   }
 }
 
-function parseRentalAppText(t) {
-  // Helper: try multiple regex patterns, return first match
-  function get(pats, len = 80) {
+function parseRentalAppText(raw) {
+  // Normalise: collapse runs of whitespace within lines, keep line breaks
+  const t = raw.replace(/[ \t]+/g, ' ').replace(/\r/g, '');
+
+  // ── Core helpers ──────────────────────────────────────────────────────────
+  // Try regex array, return first captured group that looks like a real value
+  function get(pats, maxLen = 100) {
     for (const p of pats) {
       const m = t.match(p);
       if (m && m[1]) {
-        const v = m[1].trim().replace(/\s{2,}/g, ' ').replace(/[:\|]+$/, '').trim();
-        if (v.length >= 1 && v.length <= len) return v;
+        const v = m[1].trim().replace(/\s{2,}/g,' ').replace(/^[:\|\s]+|[:\|\s]+$/g,'');
+        if (v.length >= 1 && v.length <= maxLen) return v;
       }
     }
     return '';
   }
-  // Helper: find value that appears after a label on the same or next line
-  function after(label, len = 80) {
-    const esc = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+  // Find the value that follows a label (handles "Label: Value" and "Label Value" patterns)
+  function after(label, maxLen = 100) {
+    const e = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     return get([
-      new RegExp(esc + '[:\\s]+([^\\n]{1,' + len + '})'),
-      new RegExp(esc + '\\s*\\|?\\s*([^\\n]{1,' + len + '})'),
-    ], len);
+      new RegExp(e + '\\s*:\\s*([^\\n]{1,' + maxLen + '})', 'i'),
+      new RegExp(e + '\\s+([^\\n]{1,' + maxLen + '})', 'i'),
+    ], maxLen);
   }
 
+  // Find Yes/No answer within 400 chars of a question keyword
+  function yesNo(keyword) {
+    const e = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(e + '([\\s\\S]{0,400}?)\\b(Yes|No)\\b', 'i');
+    const m = t.match(re);
+    return m ? m[2] : '';
+  }
+
+  // All phone numbers found in document (returns array)
+  const allPhones = [];
+  const phoneRe = /\b(\(?\d{3}\)?[\s.\-]\d{3}[\s.\-]\d{4})\b/g;
+  let pm; while ((pm = phoneRe.exec(t)) !== null) allPhones.push(pm[1].trim());
+
+  // All emails
+  const allEmails = [];
+  const emailRe = /\b([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,6})\b/g;
+  let em; while ((em = emailRe.exec(t)) !== null) allEmails.push(em[1]);
+
+  // ── Field extraction ──────────────────────────────────────────────────────
+  const email1 = get([/[Ee]-?[Mm]ail\s*:\s*([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,6})/]) || allEmails[0] || '';
+  const email2 = allEmails.find(e => e !== email1) || '';
+
+  const phone1 = get([
+    /Cell\s*(?:#|No\.?|Phone)?\s*:\s*([0-9()\s.\-+]{7,20})/i,
+    /(?:Cell|Mobile)\s*:\s*([0-9()\s.\-+]{7,20})/i,
+    /Phone\s*(?:#|No\.?|1)?\s*:\s*([0-9()\s.\-+]{7,20})/i,
+  ]) || allPhones[0] || '';
+  const phone2 = get([
+    /Home\s*(?:#|No\.?|Phone)?\s*:\s*([0-9()\s.\-+]{7,20})/i,
+    /Alt(?:ernate)?\s*(?:Phone|#)?\s*:\s*([0-9()\s.\-+]{7,20})/i,
+    /Work\s*(?:Phone|#)?\s*:\s*([0-9()\s.\-+]{7,20})/i,
+    /Phone\s*(?:#|No\.?|2)\s*:\s*([0-9()\s.\-+]{7,20})/i,
+  ]) || (allPhones[1] !== phone1 ? allPhones[1] : '') || '';
+
+  // Wage helper: strip $ and commas, return number
+  function wage(pats) {
+    const v = get(pats);
+    if (!v) return 0;
+    return parseFloat(v.replace(/[$,\s]/g,'')) || 0;
+  }
+
+  // Yes/No with multiple keyword variants
+  function yn2(kws) {
+    for (const k of kws) { const v = yesNo(k); if (v) return v; }
+    return '';
+  }
+
+  // Reference helper: extract name/phone/relationship for reference N
+  function ref(n) {
+    const sec = (() => {
+      // Try to isolate the section for reference N
+      const re = new RegExp('Reference\\s*' + n + '[\\s\\S]{0,600}?(?=Reference\\s*' + (n+1) + '|Emergency|$)', 'i');
+      const m = t.match(re);
+      return m ? m[0] : '';
+    })();
+    if (!sec && n > 1) return { name:'', rel:'', phone:'' };
+    const src = sec || t;
+    const nameP = n === 1
+      ? [/Reference\s*1\s*(?:Name)?\s*:\s*([^\n]{2,50})/i, /(?:Name|Referee)\s*:\s*([^\n]{2,50})/i]
+      : [new RegExp('Reference\\s*' + n + '\\s*(?:Name)?\\s*:\\s*([^\\n]{2,50})', 'i')];
+    const name  = get(nameP.map(p => { try { return p; } catch(e){return /^$/;} }));
+    const phone = (() => {
+      const pm = src.match(/\b(\(?\d{3}\)?[\s.\-]\d{3}[\s.\-]\d{4})\b/);
+      return pm ? pm[1] : '';
+    })();
+    const rel = get([/Rel(?:ationship)?\s*:\s*([^\n]{2,30})/i], 30);
+    return { name, rel, phone };
+  }
+
+  const r1 = {
+    name:  get([/Reference\s*(?:#\s*)?1\s*(?:Name)?\s*:\s*([^\n]{2,50})/i,
+                /Ref(?:erence)?\s*1[:\s]+([^\n]{2,50})/i]),
+    phone: get([/Reference\s*(?:#\s*)?1[^\n]*Phone[^\n]*:\s*([0-9()\s.\-]{7,20})/i]),
+    rel:   get([/Reference\s*(?:#\s*)?1[^\n]*Rel[^\n]*:\s*([^\n]{2,30})/i]),
+  };
+  const r2 = {
+    name:  get([/Reference\s*(?:#\s*)?2\s*(?:Name)?\s*:\s*([^\n]{2,50})/i]),
+    phone: get([/Reference\s*(?:#\s*)?2[^\n]*Phone[^\n]*:\s*([0-9()\s.\-]{7,20})/i]),
+    rel:   get([/Reference\s*(?:#\s*)?2[^\n]*Rel[^\n]*:\s*([^\n]{2,30})/i]),
+  };
+  const r3 = {
+    name:  get([/Reference\s*(?:#\s*)?3\s*(?:Name)?\s*:\s*([^\n]{2,50})/i]),
+    phone: get([/Reference\s*(?:#\s*)?3[^\n]*Phone[^\n]*:\s*([0-9()\s.\-]{7,20})/i]),
+    rel:   get([/Reference\s*(?:#\s*)?3[^\n]*Rel[^\n]*:\s*([^\n]{2,30})/i]),
+  };
+
   return {
-    // ── Applicant ──────────────────────────────────────────────────────────
-    email:       get([/[Ee]-?[Mm]ail[:\s]+([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,6})/]),
-    phone1:      get([/(?:Phone|Cell|Tel|Mobile)[^:]*:\s*([0-9][0-9\s\-().+]{6,18}[0-9])/i]),
-    phone2:      get([/(?:Alt|Alternative|Second|Other)\s+(?:Phone|Cell|Tel)[^:]*:\s*([0-9][0-9\s\-().+]{6,18}[0-9])/i]),
-    dob:         get([/(?:Date\s+of\s+Birth|DOB|Birthdate)[^:]*:\s*([0-9\/\-\.]{6,12})/i]),
-    sin:         get([/\bSIN\b[^:]*:\s*([0-9]{3}[\s\-]?[0-9]{3}[\s\-]?[0-9]{3})/i]),
-    currentAddress: after('Current Address', 100) || after('Present Address', 100),
+    // ── Contact ───────────────────────────────────────────────────────────
+    email:  email1,
+    phone1, phone2,
+    dob:    get([/(?:Date\s+of\s+Birth|D\.?O\.?B\.?|Birthdate)\s*:\s*([0-9\/\-\.]{6,12})/i]),
+    sin:    get([/\bS\.?I\.?N\.?\s*:\s*([0-9xX]{3}[\s\-]?[0-9xX]{3}[\s\-]?[0-9xX]{3})/i]),
+    currentAddress: after('Current Address', 120) || after('Present Address', 120) ||
+                    after('Current Residential', 120),
 
-    // ── Employment ─────────────────────────────────────────────────────────
-    empStatus:    get([/Employment\s+Status[^:]*:\s*([^\n]{2,30})/i]),
-    empEmployer:  after('Employer', 60),
-    empAddress:   after('Employer Address', 100) || after('Business Address', 100),
-    empPosition:  after('Position', 40) || after('Occupation', 40) || after('Job Title', 40),
-    empLength:    after('Length of Employment', 30) || after('Duration of Employment', 30),
-    empWage:      (() => {
-      const v = get([/(?:Monthly\s+)?(?:Wage|Salary|Income|Gross)[^:]*:\s*\$?\s*([0-9,]{3,10})/i]);
-      return v ? parseFloat(v.replace(/,/g, '')) || 0 : 0;
-    })(),
-    empSupervisor:  after('Supervisor', 50),
-    empSupPhone:    get([/Supervisor[^:]*Phone[^:]*:\s*([0-9][0-9\s\-().+]{6,18}[0-9])/i]),
-    empOther:       after('Other Income', 80) || after('Additional Income', 80),
+    // ── Property & Occupancy ──────────────────────────────────────────────
+    propertyAddress:  after('Property Address', 120) || after('Address of Unit', 120) ||
+                      after('Unit Applied For', 120) || after('Rental Address', 120),
+    propertyManager:  after('Property Manager', 60),
+    desiredOccupancy: after('Desired Occupancy', 30) || after('Move.?in Date', 30) ||
+                      after('Desired Move', 30) || after('Occupancy Date', 30),
+    maxOccupants: get([/(?:Max(?:imum)?|Total)\s+(?:No\.?\s+of\s+)?Occupants?\s*:\s*([0-9]{1,2})/i,
+                       /Occupants?\s*:\s*([0-9]{1,2})/i]),
+    adults:   get([/(?:No\.?\s+of\s+)?Adults?\s*:\s*([0-9]{1,2})/i,
+                   /#\s*of\s*Adults?\s*:\s*([0-9]{1,2})/i]),
+    children: get([/(?:No\.?\s+of\s+)?Children\s*:\s*([0-9]{1,2})/i,
+                   /#\s*of\s*Children\s*:\s*([0-9]{1,2})/i]),
 
-    // ── Co-Applicant ────────────────────────────────────────────────────────
-    coName:       after('Co-Applicant', 50) || after('Co Applicant', 50),
-    coEmail:      get([/Co.{0,20}[Ee]mail[:\s]+([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,6})/i]),
-    coPhone1:     get([/Co.{0,20}[Pp]hone[^:]*:\s*([0-9][0-9\s\-().+]{6,18}[0-9])/i]),
-    coEmpEmployer: get([/Co.{0,20}[Ee]mployer[^:]*:\s*([^\n]{2,60})/i]),
-    coEmpPosition: get([/Co.{0,20}[Pp]osition[^:]*:\s*([^\n]{2,40})/i]),
-    coEmpWage:    (() => {
-      const v = get([/Co.{0,20}(?:Wage|Salary)[^:]*:\s*\$?\s*([0-9,]{3,10})/i]);
-      return v ? parseFloat(v.replace(/,/g, '')) || 0 : 0;
-    })(),
+    // ── Primary Employment ────────────────────────────────────────────────
+    empStatus:    after('Employment Status', 40),
+    empEmployer:  after('Name of Employer', 70) || after('Employer', 70),
+    empAddress:   after('Address of Employer', 120) || after('Employer Address', 120),
+    empPosition:  after('Position', 50) || after('Title', 50) || after('Occupation', 50),
+    empLength:    after('Length of Employment', 40) || after('How long at this', 40) ||
+                  after('Duration of Employment', 40),
+    empWage:      wage([/(?:Monthly\s+)?Gross\s+(?:Income|Wage|Salary)\s*:\s*\$?\s*([\d,]+)/i,
+                        /(?:Monthly\s+)?(?:Income|Wage|Salary)\s*:\s*\$?\s*([\d,]+)/i,
+                        /\$\s*([\d,]{3,8})\s*\/?\s*month/i]),
+    empSupervisor: after('Supervisor', 60) || after('Name of Supervisor', 60),
+    empSupPhone:   get([/Supervisor[^\n]*Phone\s*:\s*([0-9()\s.\-]{7,20})/i,
+                        /Phone\s+of\s+Supervisor\s*:\s*([0-9()\s.\-]{7,20})/i]),
+    empOther:      after('Other Income', 100) || after('Additional Income', 100) ||
+                   after('Other Source', 100),
 
-    // ── Previous Tenancy ───────────────────────────────────────────────────
-    prevAddress:       after('Previous Address', 100) || after('Former Address', 100),
-    prevLandlordName:  after('Landlord', 50),
-    prevLandlordPhone: get([/Landlord[^:]*Phone[^:]*:\s*([0-9][0-9\s\-().+]{6,18}[0-9])/i]),
-    prevStay:          after('Length of Stay', 30) || after('How Long', 30),
-    prevRent:          get([/(?:Monthly\s+)?Rent[^:]*:\s*\$?\s*([0-9,]{2,8})/i]),
-    prevReason:        after('Reason for Leaving', 120),
+    // ── Co-Applicant ──────────────────────────────────────────────────────
+    coName:  after('Co-?Applicant', 60) || after('Joint Applicant', 60) ||
+             after('Second Applicant', 60),
+    coDob:   get([/Co.{0,20}(?:Date\s+of\s+Birth|DOB)\s*:\s*([0-9\/\-\.]{6,12})/i]),
+    coSIN:   get([/Co.{0,20}S\.?I\.?N\.?\s*:\s*([0-9xX]{3}[\s\-]?[0-9xX]{3}[\s\-]?[0-9xX]{3})/i]),
+    coEmail: get([/Co.{0,30}[Ee]mail\s*:\s*([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,6})/i]) || email2,
+    coPhone1: get([/Co.{0,30}(?:Cell|Phone)\s*:\s*([0-9()\s.\-]{7,20})/i]),
+    coCurrentAddress: get([/Co.{0,30}(?:Current|Present)\s+Address\s*:\s*([^\n]{5,120})/i]),
+    coEmpStatus:   get([/Co.{0,30}Employment\s+Status\s*:\s*([^\n]{2,40})/i]),
+    coEmpEmployer: get([/Co.{0,30}(?:Name\s+of\s+)?Employer\s*:\s*([^\n]{2,70})/i]),
+    coEmpAddress:  get([/Co.{0,30}(?:Address\s+of\s+)?Employer\s+Address\s*:\s*([^\n]{5,120})/i]),
+    coEmpPosition: get([/Co.{0,30}Position\s*:\s*([^\n]{2,50})/i]),
+    coEmpLength:   get([/Co.{0,30}Length\s+of\s+Employment\s*:\s*([^\n]{2,40})/i]),
+    coEmpWage:     wage([/Co.{0,30}(?:Gross\s+)?(?:Income|Wage|Salary)\s*:\s*\$?\s*([\d,]+)/i]),
+    coEmpSupervisor: get([/Co.{0,30}Supervisor\s*:\s*([^\n]{2,60})/i]),
+    coEmpSupPhone:   get([/Co.{0,30}Supervisor[^\n]*Phone\s*:\s*([0-9()\s.\-]{7,20})/i]),
+    coEmpOther:      get([/Co.{0,30}Other\s+Income\s*:\s*([^\n]{2,100})/i]),
 
-    // ── Occupancy ─────────────────────────────────────────────────────────
-    desiredOccupancy: after('Desired Occupancy', 20) || after('Move.in Date', 20) || after('Desired Move', 20),
-    maxOccupants: get([/(?:Max|Maximum|Total)\s+Occupants?[^:]*:\s*([0-9]{1,2})/i]),
-    adults:       get([/Adults?[^:]*:\s*([0-9]{1,2})/i]),
-    children:     get([/Children[^:]*:\s*([0-9]{1,2})/i]),
+    // ── Previous Tenancy ──────────────────────────────────────────────────
+    prevAddress:       after('Previous (?:Rental )?Address', 120) ||
+                       after('Former Address', 120) || after('Last Address', 120),
+    prevLandlordName:  after('(?:Previous |Former )?Landlord(?:\s+Name)?', 70),
+    prevLandlordPhone: get([/(?:Landlord|Previous)[^\n]*Phone\s*:\s*([0-9()\s.\-]{7,20})/i]),
+    prevStay:          after('(?:Length|Duration)\s+of\s+(?:Tenancy|Stay)', 40) ||
+                       after('How\s+[Ll]ong', 40),
+    prevRent:          get([/(?:Previous|Monthly)\s+Rent\s*:\s*\$?\s*([\d,]{2,8})/i,
+                            /Rent\s*:\s*\$\s*([\d,]{2,8})/i]),
+    prevReason:        after('Reason\s+for\s+Leaving', 150) ||
+                       after('Why\s+(?:are\s+you\s+)?[Ll]eaving', 150),
 
-    // ── Credit / Background ────────────────────────────────────────────────
-    crBankruptcy:   get([/[Bb]ankruptcy[^:]*:\s*(Yes|No)/i]),
-    crEviction:     get([/[Ee]vict(?:ed|ion)[^:]*:\s*(Yes|No)/i]),
-    crLatePayments: get([/[Ll]ate\s+[Pp]ayments?[^:]*:\s*(Yes|No)/i]),
-    crRefused:      get([/[Rr]efused\s+to\s+[Pp]ay[^:]*:\s*(Yes|No)/i]),
-    crExplanation:  after('Explanation', 200),
+    // ── Credit / Background ───────────────────────────────────────────────
+    crBankruptcy:   yn2(['bankruptcy','declared bankruptcy','bankrupt']),
+    crEviction:     yn2(['evict','been evicted','eviction notice']),
+    crLatePayments: yn2(['late (?:rental )?payments?','late rent','overdue rent']),
+    crRefused:      yn2(['refused to pay','refus(?:ed|al) (?:to )?pay']),
+    crExplanation:  after('(?:Explanation|Please Explain|If yes)', 300),
 
-    // ── Additional ─────────────────────────────────────────────────────────
-    hasPets:          get([/[Pp]ets?[^:]*:\s*(Yes|No)/i]),
-    petDesc:          after('Pet Description', 80) || after('Type of Pet', 80),
-    smokes:           get([/[Ss]mok(?:ing|e|er)[^:]*:\s*(Yes|No)/i]),
-    hasInsurance:     get([/[Ii]nsurance[^:]*:\s*(Yes|No)/i]),
+    // ── Additional ────────────────────────────────────────────────────────
+    hasPets:       yn2(['(?:have any )?pets?','do you have.*pet']),
+    petDesc:       after('(?:Type|Kind|Description)\s+of\s+[Pp]et', 80) ||
+                   after('Pet\s+(?:Type|Description|Breed)', 80),
+    smokes:        yn2(['smok(?:e|ing|er)','does anyone.*smok','household.*smok']),
+    hasInsurance:  yn2(['tenant insurance','renter.?s insurance','do you have.*insurance']),
+    jointCreditConsent: yn2(['joint credit','credit check consent','authorize.*credit']),
+
+    // ── Acknowledgements ──────────────────────────────────────────────────
+    ackNoPetsPermission: yn2(['written permission','pets.*barbeque','barbeque.*written']),
+    ackPetDeposit:       yn2(['pet.*deposit','damage deposit.*pet','\\$300.*pet']),
+    ackInfoTrue:         yn2(['information.*true','declared.*true','true and correct']),
+    ackAuthorizeObtain:  yn2(['authorize.*obtain','landlord.*obtain','obtain.*information']),
+    ackAuthorizeDisclose: yn2(['reporting agenc','disclose.*information','authorize.*disclose']),
 
     // ── References ────────────────────────────────────────────────────────
-    ref1Name:  get([/Reference\s*1[^:]*Name[^:]*:\s*([^\n]{2,50})/i, /Ref(?:erence)?\s*1[:\s]+([^\n]{2,50})/i]),
-    ref1Phone: get([/Reference\s*1[^:]*Phone[^:]*:\s*([0-9][0-9\s\-().+]{6,18}[0-9])/i]),
-    ref1Rel:   get([/Reference\s*1[^:]*Rel(?:ationship)?[^:]*:\s*([^\n]{2,30})/i]),
-    ref2Name:  get([/Reference\s*2[^:]*Name[^:]*:\s*([^\n]{2,50})/i]),
-    ref2Phone: get([/Reference\s*2[^:]*Phone[^:]*:\s*([0-9][0-9\s\-().+]{6,18}[0-9])/i]),
-    ref2Rel:   get([/Reference\s*2[^:]*Rel(?:ationship)?[^:]*:\s*([^\n]{2,30})/i]),
-    ref3Name:  get([/Reference\s*3[^:]*Name[^:]*:\s*([^\n]{2,50})/i]),
-    ref3Phone: get([/Reference\s*3[^:]*Phone[^:]*:\s*([0-9][0-9\s\-().+]{6,18}[0-9])/i]),
-    ref3Rel:   get([/Reference\s*3[^:]*Rel(?:ationship)?[^:]*:\s*([^\n]{2,30})/i]),
+    ref1Name:  r1.name,  ref1Phone: r1.phone,  ref1Rel: r1.rel,
+    ref2Name:  r2.name,  ref2Phone: r2.phone,  ref2Rel: r2.rel,
+    ref3Name:  r3.name,  ref3Phone: r3.phone,  ref3Rel: r3.rel,
 
-    // ── Emergency Contact ──────────────────────────────────────────────────
-    emgName:    after('Emergency Contact', 50),
-    emgRel:     get([/Emergency[^:]*Rel(?:ationship)?[^:]*:\s*([^\n]{2,30})/i]),
-    emgPhone:   get([/Emergency[^:]*Phone[^:]*:\s*([0-9][0-9\s\-().+]{6,18}[0-9])/i]),
-    emgAddress: get([/Emergency[^:]*Address[^:]*:\s*([^\n]{5,100})/i]),
-
-    // ── Property ───────────────────────────────────────────────────────────
-    propertyAddress: after('Property Address', 100) || after('Unit Address', 100) || after('Address of Unit', 100),
-    propertyManager: after('Property Manager', 50),
+    // ── Emergency Contact ─────────────────────────────────────────────────
+    emgName:    after('Emergency Contact(?:\s+Name)?', 60),
+    emgRel:     get([/Emergency[^\n]*Rel(?:ationship)?\s*:\s*([^\n]{2,40})/i]),
+    emgPhone:   get([/Emergency[^\n]*Phone\s*:\s*([0-9()\s.\-]{7,20})/i]),
+    emgAddress: get([/Emergency[^\n]*Address\s*:\s*([^\n]{5,120})/i]),
   };
 }
 
