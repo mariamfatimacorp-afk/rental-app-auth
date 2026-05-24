@@ -98,6 +98,19 @@ main{flex:1;overflow-y:auto;padding:22px 24px}
 .fval.good{color:var(--grn)}
 .fval.warn{color:var(--ylw)}
 .fval.bad{color:var(--red)}
+/* Edit mode */
+.ef-input{width:100%;border:1.5px solid var(--acc);border-radius:4px;padding:4px 8px;font-size:13px;background:#FAFFFE;color:var(--txt);font-family:inherit;margin-top:2px}
+.ef-input:focus{outline:none;border-color:var(--pri);box-shadow:0 0 0 2px rgba(82,183,136,.2)}
+.ef-sel{width:90px;border:1.5px solid var(--acc);border-radius:4px;padding:3px 6px;font-size:12px;background:#FAFFFE;color:var(--txt);font-family:inherit}
+.ef-sel.wide{width:100%}
+.edit-bar{background:#FEF3C7;border:1px solid #FDE68A;border-radius:8px;padding:10px 16px;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px}
+.edit-bar-txt{font-size:12px;color:#92400E;font-weight:600;display:flex;align-items:center;gap:6px}
+.edit-bar-btns{display:flex;gap:6px}
+.btn-ylw{background:#D97706;color:#fff;border:none}.btn-ylw:hover{background:#B45309}
+/* Debug section */
+details.dbg{margin-top:10px}
+details.dbg summary{font-size:11px;color:var(--mut);cursor:pointer;user-select:none}
+details.dbg pre{font-size:10px;white-space:pre-wrap;word-break:break-all;background:#F8FAFF;border:1px solid var(--bdr);border-radius:6px;padding:8px;max-height:200px;overflow-y:auto;margin-top:6px;color:var(--txt)}
 .tag{display:inline-block;padding:1px 7px;border-radius:8px;font-size:11px;font-weight:600}
 .tag-no{background:#F0FDF4;color:#166534;border:1px solid #BBF7D0}
 .tag-yes{background:#FEF9C3;color:#854D0E;border:1px solid #FDE68A}
@@ -948,7 +961,7 @@ let apps = [
   }
 ];
 
-let filter = 'all', selId = null, step = 0, leaseApp = null;
+let filter = 'all', selId = null, step = 0, leaseApp = null, editMode = false;
 
 // ── LIST ──────────────────────────────────────────────────────────────────────
 function getVisibleApps() {
@@ -1046,6 +1059,8 @@ function pmClass(email) {
 }
 
 function selApp(id) {
+  // If switching to a different application, exit edit mode
+  if (String(id) !== String(selId)) editMode = false;
   selId = id;
   renderList();
   const a = apps.find(x => String(x.id) === String(id));
@@ -1060,33 +1075,76 @@ function selApp(id) {
   const pmLabel = PM_NAMES[a.pmEmail] || a.propertyManager || '';
   const isAdmin = currentUser?.role === 'admin';
   const isPM    = currentUser?.role === 'pm';
-  const hasCoApp = !!a.coName;
   const sid = JSON.stringify(a.id);
 
-  function frow(lbl, val, cls='') {
+  // ── Helper: one field row; key enables editable input in edit mode ──────────
+  function frow(lbl, val, cls='', key='') {
     const v = val !== undefined && val !== null && val !== '' ? String(val) : '';
+    if (editMode && key) {
+      return `<div class="frow"><span class="flbl">${lbl}</span><input class="ef-input" id="ef_${key}" value="${v.replace(/"/g,'&quot;')}"></div>`;
+    }
     return `<div class="frow"><span class="flbl">${lbl}</span><span class="fval ${cls}">${v || '<span style="color:var(--mut);font-weight:400">—</span>'}</span></div>`;
   }
+
+  // ── Helper: multi-line textarea for long text fields ─────────────────────
+  function farea(lbl, val, key='') {
+    const v = val !== undefined && val !== null && val !== '' ? String(val) : '';
+    if (editMode && key) {
+      return `<div class="frow"><span class="flbl">${lbl}</span><textarea class="ef-input" id="ef_${key}" rows="2" style="resize:vertical">${v.replace(/</g,'&lt;')}</textarea></div>`;
+    }
+    return `<div class="frow"><span class="flbl">${lbl}</span><span class="fval">${v || '<span style="color:var(--mut);font-weight:400">—</span>'}</span></div>`;
+  }
+
+  // ── Helper: Yes/No credit row; select in edit mode ───────────────────────
   function yn(val) {
     if (!val) return '<span style="color:var(--mut)">—</span>';
     if (val === 'No')  return '<span class="tag tag-no">No</span>';
     return '<span class="tag tag-bad">Yes ⚠</span>';
   }
-  function ynGood(val) { // for insurance / consents where Yes is good
+  function ynGood(val) {
     if (!val) return '<span style="color:var(--mut)">—</span>';
     if (val === 'Yes') return '<span class="tag tag-no">Yes ✓</span>';
+    if (val.toLowerCase().startsWith('ag')) return '<span class="tag tag-no">Agree ✓</span>';
     return '<span class="tag tag-bad">No</span>';
   }
-  function creditRow(label, val) {
+  function crRow(label, val, key='') {
+    if (editMode && key) {
+      return `<div class="credit-row"><span>${label}</span>
+        <select class="ef-sel" id="ef_${key}">
+          <option value="">—</option>
+          <option value="Yes" ${val==='Yes'?'selected':''}>Yes</option>
+          <option value="No" ${val==='No'?'selected':''}>No</option>
+        </select></div>`;
+    }
     return `<div class="credit-row"><span>${label}</span>${yn(val)}</div>`;
   }
+  function crRowGood(label, val, key='') {
+    if (editMode && key) {
+      return `<div class="credit-row"><span>${label}</span>
+        <select class="ef-sel" id="ef_${key}">
+          <option value="">—</option>
+          <option value="Yes" ${val==='Yes'||val?.toLowerCase().startsWith('ag')?'selected':''}>Yes / Agree</option>
+          <option value="No" ${val==='No'?'selected':''}>No</option>
+        </select></div>`;
+    }
+    return `<div class="credit-row"><span>${label}</span>${ynGood(val)}</div>`;
+  }
+
   function pill(label, status) {
     const on = a.status === status;
     const canClick = isAdmin || (status === 'reviewed' && isPM);
     return `<button class="sts-pill s-${status}${on?' on':''}${!canClick?' off':''}"
       ${canClick ? `onclick='setStatus(${sid},"${status}")'` : 'disabled'}>${on?'●':'○'} ${label}</button>`;
   }
-  function refCard(n, name, rel, phone) {
+
+  // Reference row — editable in edit mode
+  function refRow(n, name, rel, phone) {
+    if (editMode) {
+      return `
+        <div class="frow"><span class="flbl">Reference ${n} — Name</span><input class="ef-input" id="ef_ref${n}Name" value="${(name||'').replace(/"/g,'&quot;')}"></div>
+        <div class="frow"><span class="flbl">Reference ${n} — Relationship</span><input class="ef-input" id="ef_ref${n}Rel" value="${(rel||'').replace(/"/g,'&quot;')}"></div>
+        <div class="frow"><span class="flbl">Reference ${n} — Phone</span><input class="ef-input" id="ef_ref${n}Phone" value="${(phone||'').replace(/"/g,'&quot;')}"></div>`;
+    }
     if (!name) return `<div class="frow"><span class="flbl">Reference ${n}</span><span class="fval" style="color:var(--mut);font-weight:400">—</span></div>`;
     return `<div class="frow"><span class="flbl">Reference ${n}</span><span class="fval">${name}${rel?' · '+rel:''}${phone?' · '+phone:''}</span></div>`;
   }
@@ -1100,21 +1158,33 @@ function selApp(id) {
       <span>Reading PDF to extract all applicant fields — this happens once per application…</span>
     </div>
 
+    <!-- ── Edit mode bar ── -->
+    ${editMode ? `
+    <div class="edit-bar">
+      <div class="edit-bar-txt">✏️ Edit Mode — all fields are now editable. Click Save when done.</div>
+      <div class="edit-bar-btns">
+        <button class="btn btn-grn" onclick='saveEdit(${sid})'>💾 Save Changes</button>
+        <button class="btn btn-out" onclick='cancelEdit(${sid})'>✕ Cancel</button>
+      </div>
+    </div>` : ''}
+
     <!-- ── Header ── -->
     <div class="dhead">
       <div>
-        <div class="dname">${a.name}</div>
+        <div class="dname">${editMode ? `<input class="ef-input" id="ef_name" value="${a.name.replace(/"/g,'&quot;')}" style="font-size:18px;font-weight:700">` : a.name}</div>
         <div class="dmeta" style="margin-top:5px;gap:8px">
           <span>Submitted ${a.submittedAt || '—'}</span>
           <span class="pm-tag ${pmClass(a.pmEmail)}">${pmLabel || 'Unassigned'}</span>
         </div>
       </div>
-      <div class="dacts">
+      <div class="dacts" style="flex-wrap:wrap;gap:6px">
+        ${!editMode ? `<button class="btn btn-ylw" onclick='toggleEdit(${sid})'>✏️ Edit</button>` : ''}
+        ${!editMode ? `<button class="btn btn-out" style="font-size:11px" onclick='rescanPdf(${sid})'>↻ Rescan PDF</button>` : ''}
         ${a.pdfUrl ? `<a href="${a.pdfUrl}" target="_blank" rel="noopener noreferrer" class="btn btn-pri">&#128196; View PDF</a>` : ''}
       </div>
     </div>
 
-    <!-- ── Status bar (all 4 states, always visible) ── -->
+    <!-- ── Status bar ── -->
     <div class="sts-bar">
       <span class="sts-lbl">Status:</span>
       ${pill('New','new')}
@@ -1141,20 +1211,20 @@ function selApp(id) {
     <div class="secgrid" style="margin-bottom:12px">
       <div class="scard">
         <h3><span class="icon">🏠</span> Property &amp; Occupancy</h3>
-        ${frow('Property Address', a.propertyAddress)}
-        ${frow('Property Manager', a.propertyManager || pmLabel)}
-        ${frow('Desired Move-in Date', a.desiredOccupancy)}
-        ${frow('Max Occupants', a.maxOccupants)}
-        ${frow('Adults', a.adults)}
-        ${frow('Children', a.children)}
+        ${frow('Property Address', a.propertyAddress, '', 'propertyAddress')}
+        ${frow('Property Manager (from form)', a.propertyManager || pmLabel, '', 'propertyManager')}
+        ${frow('Desired Move-in Date', a.desiredOccupancy, '', 'desiredOccupancy')}
+        ${frow('Max Occupants', a.maxOccupants, '', 'maxOccupants')}
+        ${frow('Adults', a.adults, '', 'adults')}
+        ${frow('Children / Dependants', a.children, '', 'children')}
       </div>
       <div class="scard">
         <h3><span class="icon">📋</span> Rental Profile</h3>
-        <div class="credit-row"><span>Has Pets?</span>${yn(a.hasPets)}</div>
-        ${a.petDesc ? frow('Pet Type / Description', a.petDesc) : ''}
-        <div class="credit-row"><span>Smoking in household?</span>${yn(a.smokes)}</div>
-        <div class="credit-row"><span>Tenant Insurance?</span>${ynGood(a.hasInsurance)}</div>
-        <div class="credit-row"><span>Joint Credit Check Consent?</span>${ynGood(a.jointCreditConsent)}</div>
+        ${crRow('Has Pets?', a.hasPets, 'hasPets')}
+        ${frow('Pet Type / Description', a.petDesc, '', 'petDesc')}
+        ${crRow('Smoking in household?', a.smokes, 'smokes')}
+        ${crRowGood('Tenant Insurance?', a.hasInsurance, 'hasInsurance')}
+        ${crRowGood('Joint Credit Check Consent?', a.jointCreditConsent, 'jointCreditConsent')}
       </div>
     </div>
 
@@ -1162,77 +1232,79 @@ function selApp(id) {
     <div class="secgrid" style="margin-bottom:12px">
       <div class="scard">
         <h3><span class="icon">👤</span> Primary Applicant</h3>
-        ${frow('Full Legal Name', a.name)}
-        ${frow('Date of Birth', a.dob)}
-        ${frow('SIN (optional)', a.sin)}
-        ${frow('Email', a.email)}
-        ${frow('Phone (Cell)', a.phone1)}
-        ${frow('Phone (Home/Alt)', a.phone2)}
-        ${frow('Current Address', a.currentAddress)}
+        ${frow('Full Legal Name', a.name, '', 'name')}
+        ${frow('Date of Birth', a.dob, '', 'dob')}
+        ${frow('SIN (last 3 digits or X)', a.sin, '', 'sin')}
+        ${frow('Email', a.email, '', 'email')}
+        ${frow('Phone (Cell)', a.phone1, '', 'phone1')}
+        ${frow('Phone (Home / Alt)', a.phone2, '', 'phone2')}
+        ${frow('Current Residential Address', a.currentAddress, '', 'currentAddress')}
       </div>
       <div class="scard">
         <h3><span class="icon">💼</span> Primary Employment</h3>
-        ${frow('Employment Status', a.empStatus)}
-        ${frow('Employer', a.empEmployer)}
-        ${frow('Employer Address', a.empAddress)}
-        ${frow('Position / Title', a.empPosition)}
-        ${frow('Length of Employment', a.empLength)}
-        <div class="frow"><span class="flbl">Monthly Gross Income</span>
-          <span class="fval ${incomeRatio>0?(incomeRatio>=250?'good':'warn'):''}">
-            ${a.empWage ? '$' + Number(a.empWage).toLocaleString() + (incomeRatio>0?' ('+incomeRatio+'% of $2,500 rent)':'') : '<span style="color:var(--mut);font-weight:400">—</span>'}
-          </span>
-        </div>
-        ${frow('Supervisor Name', a.empSupervisor)}
-        ${frow('Supervisor Phone', a.empSupPhone)}
-        ${frow('Other Income / Sources', a.empOther)}
+        ${frow('Employment Status', a.empStatus, '', 'empStatus')}
+        ${frow('Name of Employer', a.empEmployer, '', 'empEmployer')}
+        ${frow('Employer Address', a.empAddress, '', 'empAddress')}
+        ${frow('Position / Title', a.empPosition, '', 'empPosition')}
+        ${frow('Length of Employment', a.empLength, '', 'empLength')}
+        ${editMode
+          ? frow('Monthly Gross Income ($)', a.empWage, '', 'empWage')
+          : `<div class="frow"><span class="flbl">Monthly Gross Income</span>
+              <span class="fval ${incomeRatio>0?(incomeRatio>=250?'good':'warn'):''}">
+                ${a.empWage ? '$' + Number(a.empWage).toLocaleString() + (incomeRatio>0?' ('+incomeRatio+'% of $2,500 rent)':'') : '<span style="color:var(--mut);font-weight:400">—</span>'}
+              </span></div>`}
+        ${frow('Supervisor Name', a.empSupervisor, '', 'empSupervisor')}
+        ${frow('Supervisor Phone', a.empSupPhone, '', 'empSupPhone')}
+        ${farea('Other Income / Sources', a.empOther, 'empOther')}
       </div>
     </div>
 
-    <!-- ── Row 3: Co-Applicant + Co-Employment (only if present) ── -->
-    ${hasCoApp ? `
+    <!-- ── Row 3: Co-Applicant + Co-Employment (always shown) ── -->
     <div class="secgrid" style="margin-bottom:12px">
       <div class="scard">
-        <h3><span class="icon">👥</span> Co-Applicant</h3>
-        ${frow('Full Legal Name', a.coName)}
-        ${frow('Date of Birth', a.coDob)}
-        ${frow('SIN (optional)', a.coSIN)}
-        ${frow('Email', a.coEmail)}
-        ${frow('Phone (Cell)', a.coPhone1)}
-        ${frow('Phone (Home/Alt)', a.coPhone2)}
-        ${frow('Current Address', a.coCurrentAddress)}
+        <h3><span class="icon">👥</span> Co-Applicant
+          ${!a.coName && !editMode ? '<span style="font-size:10px;font-weight:400;color:var(--mut);margin-left:6px">— not on file · click Edit to add</span>' : ''}
+        </h3>
+        ${frow('Full Legal Name', a.coName, '', 'coName')}
+        ${frow('Date of Birth', a.coDob, '', 'coDob')}
+        ${frow('SIN (last 3 digits or X)', a.coSIN, '', 'coSIN')}
+        ${frow('Email', a.coEmail, '', 'coEmail')}
+        ${frow('Phone (Cell)', a.coPhone1, '', 'coPhone1')}
+        ${frow('Phone (Home / Alt)', a.coPhone2, '', 'coPhone2')}
+        ${frow('Current Residential Address', a.coCurrentAddress, '', 'coCurrentAddress')}
       </div>
       <div class="scard">
         <h3><span class="icon">💼</span> Co-Applicant Employment</h3>
-        ${frow('Employment Status', a.coEmpStatus)}
-        ${frow('Employer', a.coEmpEmployer)}
-        ${frow('Employer Address', a.coEmpAddress)}
-        ${frow('Position / Title', a.coEmpPosition)}
-        ${frow('Length of Employment', a.coEmpLength)}
-        ${frow('Monthly Gross Income', a.coEmpWage ? '$'+parseFloat(a.coEmpWage).toLocaleString() : '')}
-        ${frow('Supervisor Name', a.coEmpSupervisor)}
-        ${frow('Supervisor Phone', a.coEmpSupPhone)}
-        ${frow('Other Income / Sources', a.coEmpOther)}
+        ${frow('Employment Status', a.coEmpStatus, '', 'coEmpStatus')}
+        ${frow('Name of Employer', a.coEmpEmployer, '', 'coEmpEmployer')}
+        ${frow('Employer Address', a.coEmpAddress, '', 'coEmpAddress')}
+        ${frow('Position / Title', a.coEmpPosition, '', 'coEmpPosition')}
+        ${frow('Length of Employment', a.coEmpLength, '', 'coEmpLength')}
+        ${frow('Monthly Gross Income ($)', a.coEmpWage ? (editMode ? a.coEmpWage : '$'+parseFloat(a.coEmpWage).toLocaleString()) : '', '', 'coEmpWage')}
+        ${frow('Supervisor Name', a.coEmpSupervisor, '', 'coEmpSupervisor')}
+        ${frow('Supervisor Phone', a.coEmpSupPhone, '', 'coEmpSupPhone')}
+        ${farea('Other Income / Sources', a.coEmpOther, 'coEmpOther')}
       </div>
-    </div>` : ''}
+    </div>
 
     <!-- ── Row 4: Previous Tenancy | Credit History ── -->
     <div class="secgrid" style="margin-bottom:12px">
       <div class="scard">
         <h3><span class="icon">🏡</span> Previous Tenancy</h3>
-        ${frow('Previous Address', a.prevAddress)}
-        ${frow('Landlord Name', a.prevLandlordName)}
-        ${frow('Landlord Phone', a.prevLandlordPhone)}
-        ${frow('Length of Stay', a.prevStay)}
-        ${frow('Monthly Rent', a.prevRent ? '$'+a.prevRent : '')}
-        ${frow('Reason for Leaving', a.prevReason)}
+        ${frow('Previous Rental Address', a.prevAddress, '', 'prevAddress')}
+        ${frow('Landlord Name', a.prevLandlordName, '', 'prevLandlordName')}
+        ${frow('Landlord Phone', a.prevLandlordPhone, '', 'prevLandlordPhone')}
+        ${frow('Length of Stay', a.prevStay, '', 'prevStay')}
+        ${frow('Monthly Rent ($)', a.prevRent ? (editMode ? a.prevRent : '$'+a.prevRent) : '', '', 'prevRent')}
+        ${farea('Reason for Leaving', a.prevReason, 'prevReason')}
       </div>
       <div class="scard">
         <h3><span class="icon">⚠️</span> Credit &amp; Background</h3>
-        ${creditRow('Declared bankruptcy (last 7 yrs)?', a.crBankruptcy)}
-        ${creditRow('Ever been evicted?', a.crEviction)}
-        ${creditRow('2+ late payments in last 12 months?', a.crLatePayments)}
-        ${creditRow('Ever refused to pay rent?', a.crRefused)}
-        ${frow('Explanation (if any Yes)', a.crExplanation)}
+        ${crRow('Declared bankruptcy (last 7 yrs)?', a.crBankruptcy, 'crBankruptcy')}
+        ${crRow('Ever been evicted?', a.crEviction, 'crEviction')}
+        ${crRow('2+ late payments in last 12 months?', a.crLatePayments, 'crLatePayments')}
+        ${crRow('Ever refused to pay rent?', a.crRefused, 'crRefused')}
+        ${farea('Explanation (if any Yes above)', a.crExplanation, 'crExplanation')}
         <div style="margin-top:10px;padding:6px 10px;border-radius:6px;font-size:11px;font-weight:700;
           background:${anyFlag?'#FEF9C3':'#D1FAE5'};color:${anyFlag?'#92400E':'#065F46'}">
           ${anyFlag ? '⚠ Credit flags present — review explanation' : '✓ No credit flags reported'}
@@ -1244,11 +1316,11 @@ function selApp(id) {
     <div class="scard" style="margin-bottom:12px">
       <h3><span class="icon">✅</span> Declarations &amp; Acknowledgements</h3>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-        <div class="credit-row"><span>Pets/BBQ/Waterbeds require written permission</span>${ynGood(a.ackNoPetsPermission)}</div>
-        <div class="credit-row"><span>Pet damage deposit ($300) if pet permitted</span>${ynGood(a.ackPetDeposit)}</div>
-        <div class="credit-row"><span>Information declared true and correct</span>${ynGood(a.ackInfoTrue)}</div>
-        <div class="credit-row"><span>Authorize landlord to obtain credit/employment info</span>${ynGood(a.ackAuthorizeObtain)}</div>
-        <div class="credit-row"><span>Authorize reporting agencies to disclose information</span>${ynGood(a.ackAuthorizeDisclose)}</div>
+        ${crRowGood('Pets/BBQ/Waterbeds require written permission', a.ackNoPetsPermission, 'ackNoPetsPermission')}
+        ${crRowGood('Pet damage deposit ($300) if pet permitted', a.ackPetDeposit, 'ackPetDeposit')}
+        ${crRowGood('Information declared true and correct', a.ackInfoTrue, 'ackInfoTrue')}
+        ${crRowGood('Authorize landlord to obtain credit/employment info', a.ackAuthorizeObtain, 'ackAuthorizeObtain')}
+        ${crRowGood('Authorize reporting agencies to disclose information', a.ackAuthorizeDisclose, 'ackAuthorizeDisclose')}
       </div>
     </div>
 
@@ -1256,16 +1328,16 @@ function selApp(id) {
     <div class="secgrid" style="margin-bottom:12px">
       <div class="scard">
         <h3><span class="icon">📞</span> References</h3>
-        ${refCard(1, a.ref1Name, a.ref1Rel, a.ref1Phone)}
-        ${refCard(2, a.ref2Name, a.ref2Rel, a.ref2Phone)}
-        ${refCard(3, a.ref3Name, a.ref3Rel, a.ref3Phone)}
+        ${refRow(1, a.ref1Name, a.ref1Rel, a.ref1Phone)}
+        ${refRow(2, a.ref2Name, a.ref2Rel, a.ref2Phone)}
+        ${refRow(3, a.ref3Name, a.ref3Rel, a.ref3Phone)}
       </div>
       <div class="scard">
         <h3><span class="icon">🚨</span> Emergency Contact</h3>
-        ${frow('Name', a.emgName)}
-        ${frow('Relationship', a.emgRel)}
-        ${frow('Phone', a.emgPhone)}
-        ${frow('Address', a.emgAddress)}
+        ${frow('Full Name', a.emgName, '', 'emgName')}
+        ${frow('Relationship', a.emgRel, '', 'emgRel')}
+        ${frow('Phone', a.emgPhone, '', 'emgPhone')}
+        ${frow('Address', a.emgAddress, '', 'emgAddress')}
       </div>
     </div>
 
@@ -1282,6 +1354,11 @@ function selApp(id) {
           style="flex:1;padding:6px 10px;border:1.5px solid var(--bdr);border-radius:6px;font-size:12px;color:var(--txt);background:var(--bg)">
         <button class="btn btn-out" style="font-size:11px;white-space:nowrap" onclick='savePdfUrl(${sid})'>Save Link</button>
       </div>` : ''}
+      ${isAdmin && a.pdfRawText ? `
+      <details class="dbg">
+        <summary>🔍 Debug: Raw PDF Text (admin only — use to check why fields are empty)</summary>
+        <pre>${a.pdfRawText.replace(/</g,'&lt;')}</pre>
+      </details>` : ''}
     </div>
 
     <!-- ── Generate Lease bar ── -->
@@ -1718,6 +1795,62 @@ async function savePdfUrl(id) {
     toast('PDF link saved', 'ok');
   }
   selApp(id); // refresh to show/hide the Open PDF button
+}
+
+// ── EDIT MODE ─────────────────────────────────────────────────────────────────
+function toggleEdit(id) {
+  editMode = true;
+  selApp(id);
+  // Scroll detail panel to top so edit bar is visible
+  document.getElementById('detail').parentElement.scrollTop = 0;
+}
+
+function cancelEdit(id) {
+  editMode = false;
+  selApp(id);
+}
+
+function saveEdit(id) {
+  const a = apps.find(x => String(x.id) === String(id));
+  if (!a) return;
+  const updates = {};
+  // Collect every input / textarea / select that starts with ef_
+  document.querySelectorAll('[id^="ef_"]').forEach(el => {
+    const key = el.id.replace('ef_', '');
+    let val = el.value;
+    // Numeric fields — strip currency symbols and commas
+    if (key === 'empWage' || key === 'coEmpWage') {
+      val = parseFloat(String(val).replace(/[$,\s]/g,'')) || 0;
+    }
+    updates[key] = val;
+  });
+  Object.assign(a, updates);
+  appMeta(a.id, updates);
+  editMode = false;
+  renderList(); // update sidebar card in case name/PM changed
+  selApp(id);
+  if (a.spId && SP_READY) {
+    // Best-effort SharePoint sync for key fields
+    const spFields = {};
+    if (updates.name)            spFields.Title            = updates.name;
+    if (updates.email)           spFields.Email            = updates.email;
+    if (updates.phone1)          spFields.Phone1           = updates.phone1;
+    if (updates.propertyAddress) spFields.PropertyAddress  = updates.propertyAddress;
+    if (Object.keys(spFields).length) patchSP(a.spId, spFields).catch(() => {});
+  }
+  toast('Application data saved ✓', 'ok');
+}
+
+function rescanPdf(id) {
+  const a = apps.find(x => String(x.id) === String(id));
+  if (!a) return;
+  a.pdfParsed = false;
+  a.pdfRawText = '';
+  appMeta(a.id, { pdfParsed: false, pdfRawText: '' });
+  editMode = false;
+  selApp(id); // re-render to show spinner
+  if (SP_READY) extractPdfData(a).catch(e => console.warn('PDF rescan:', e));
+  toast('Re-scanning PDF…');
 }
 
 // ── MODAL ─────────────────────────────────────────────────────────────────────
