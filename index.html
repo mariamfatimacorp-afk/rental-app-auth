@@ -538,6 +538,8 @@ const LEASE_TEMPLATE_PATH = 'Rental Applications/Lease_Template.docx';
 
 const IS_DEMO    = false;
 const SP_READY   = true;
+// Bump this string whenever parseRentalAppText() changes so old cached data auto-reruns
+const PARSE_VERSION = '4';
 const SP_USE_LIST = SP_LIST !== 'YOUR_APPLICATIONS_LIST_ID';
 
 // User roles — email must match Microsoft account username (lowercase)
@@ -776,7 +778,7 @@ function fileToDraftApp(f) {
     status: 'new', pmEmail: '', pdfUrl: f.webUrl || '', notes: '',
     name: name || f.name.replace(/\.pdf$/i, ''),
     propertyAddress, propertyManager: '',
-    pdfParsed: false,
+    pdfParsed: false, parseVersion: '', pdfAnnFields: '',
     desiredOccupancy: '', maxOccupants: '', adults: '', children: '',
     sin: '', email: '', phone1: '', phone2: '', dob: '', currentAddress: '',
     coName: '', coSIN: '', coEmail: '', coPhone1: '', coPhone2: '', coCurrentAddress: '', coDob: '',
@@ -1291,11 +1293,11 @@ function selApp(id) {
 
   d.innerHTML = `
     <!-- PDF scan banner -->
-    <div id="pdfScanStatus" style="display:${a.pdfParsed?'none':'flex'};align-items:center;gap:10px;
+    <div id="pdfScanStatus" style="display:${(a.pdfParsed && a.parseVersion===PARSE_VERSION)?'none':'flex'};align-items:center;gap:10px;
          background:#EFF6FF;border:1px solid #BFDBFE;border-radius:8px;padding:10px 16px;
          margin-bottom:14px;font-size:12px;color:#1D4ED8">
       <span style="font-size:16px;animation:spin 1.2s linear infinite;display:inline-block">⏳</span>
-      <span>Reading PDF to extract all applicant fields — this happens once per application…</span>
+      <span>${a.pdfParsed && a.parseVersion!==PARSE_VERSION ? 'Parser updated — re-reading PDF with improved patterns…' : 'Reading PDF to extract all applicant fields — this happens once per application…'}</span>
     </div>
 
     <!-- ── Edit mode bar ── -->
@@ -1495,9 +1497,16 @@ function selApp(id) {
         <button class="btn btn-out" style="font-size:11px;white-space:nowrap" onclick='savePdfUrl(${sid})'>Save Link</button>
       </div>` : ''}
       ${isAdmin && a.pdfRawText ? `
+      <details class="dbg" open>
+        <summary>🔍 Debug: Raw PDF Text (admin only)
+          <button onclick="event.stopPropagation();copyDbg()" style="margin-left:10px;padding:2px 8px;font-size:10px;border:1px solid var(--bdr);border-radius:4px;background:var(--card);cursor:pointer;color:var(--txt)">📋 Copy</button>
+        </summary>
+        ${a.pdfAnnFields ? `<div style="margin-top:6px;margin-bottom:4px;font-size:10px;color:var(--mut);font-weight:600">── Annotation Fields ──</div><pre id="dbgAnn" style="font-size:10px;white-space:pre-wrap;word-break:break-all;background:#F0FFF4;border:1px solid var(--bdr);border-radius:6px;padding:8px;max-height:150px;overflow-y:auto;margin-bottom:8px;color:var(--txt)">${a.pdfAnnFields.replace(/</g,'&lt;')}</pre>` : '<div style="margin-top:6px;font-size:10px;color:var(--mut)">(No fillable annotation fields found — PDF is text-based)</div>'}
+        <div style="margin-top:6px;font-size:10px;color:var(--mut);font-weight:600">── Raw Text (column-split) ──</div>
+        <pre id="dbgRaw" style="font-size:10px;white-space:pre-wrap;word-break:break-all;background:#F8FAFF;border:1px solid var(--bdr);border-radius:6px;padding:8px;max-height:300px;overflow-y:auto;margin-top:6px;color:var(--txt)">${a.pdfRawText.replace(/</g,'&lt;')}</pre>
+      </details>` : isAdmin ? `
       <details class="dbg">
-        <summary>🔍 Debug: Raw PDF Text (admin only — use to check why fields are empty)</summary>
-        <pre>${a.pdfRawText.replace(/</g,'&lt;')}</pre>
+        <summary style="color:var(--mut);font-size:11px">🔍 Debug: PDF not yet scanned (click ↻ Rescan above)</summary>
       </details>` : ''}
     </div>
 
@@ -1514,8 +1523,8 @@ function selApp(id) {
       </div>
     </div>`;
 
-  // Kick off async PDF extraction if data not yet loaded
-  if (!a.pdfParsed && SP_READY) {
+  // Kick off async PDF extraction if not yet done OR if parsing code was updated
+  if ((!a.pdfParsed || a.parseVersion !== PARSE_VERSION) && SP_READY) {
     extractPdfData(a).catch(e => console.warn('PDF extract:', e));
   }
 }
@@ -1580,7 +1589,7 @@ function initPdfJs() {
 }
 
 async function extractPdfData(app) {
-  if (app.pdfParsed) return; // already done
+  if (app.pdfParsed && app.parseVersion === PARSE_VERSION) return; // already done with current parser
   if (typeof pdfjsLib === 'undefined') { initPdfJs(); return; }
   initPdfJs();
 
@@ -1651,8 +1660,13 @@ async function extractPdfData(app) {
     }
 
     const fields = parseRentalAppText(rawText);
-    fields.pdfParsed  = true;
-    fields.pdfRawText = rawText.slice(0, 8000); // cache truncated raw text
+    fields.pdfParsed    = true;
+    fields.parseVersion = PARSE_VERSION;
+    fields.pdfRawText   = rawText.slice(0, 25000); // cache raw text for debug
+    // Store annotation field names for debug (helps diagnose fillable-PDF field names)
+    fields.pdfAnnFields = Object.keys(annFields).length
+      ? Object.entries(annFields).map(([k,v]) => k + ': ' + v).join('\n')
+      : '';
 
     // Auto-assign PM if the PDF names one and none is manually set yet
     if (!app.pmEmail && fields.propertyManager) {
@@ -2165,12 +2179,25 @@ function rescanPdf(id) {
   const a = apps.find(x => String(x.id) === String(id));
   if (!a) return;
   a.pdfParsed = false;
+  a.parseVersion = '';
   a.pdfRawText = '';
-  appMeta(a.id, { pdfParsed: false, pdfRawText: '' });
+  a.pdfAnnFields = '';
+  appMeta(a.id, { pdfParsed: false, parseVersion: '', pdfRawText: '', pdfAnnFields: '' });
   editMode = false;
   selApp(id); // re-render to show spinner
   if (SP_READY) extractPdfData(a).catch(e => console.warn('PDF rescan:', e));
   toast('Re-scanning PDF…');
+}
+
+function copyDbg() {
+  const ann = document.getElementById('dbgAnn');
+  const raw = document.getElementById('dbgRaw');
+  const text = (ann ? '── ANNOTATION FIELDS ──\n' + ann.textContent + '\n\n' : '')
+             + (raw ? '── RAW TEXT ──\n' + raw.textContent : '');
+  navigator.clipboard.writeText(text).then(
+    () => toast('Debug text copied to clipboard ✓', 'ok'),
+    () => toast('Copy failed — select and copy manually', 'err')
+  );
 }
 
 // ── MODAL ─────────────────────────────────────────────────────────────────────
