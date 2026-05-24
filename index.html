@@ -1471,22 +1471,34 @@ async function extractPdfData(app) {
       }
     }
 
-    // Pass 2: extract raw text from every page
+    // Pass 2: extract raw text from every page (two-column aware)
+    // The rental application PDF uses a two-column layout: fields appear side-by-side.
+    // Naive Y-grouping merges "Position: Taxi driver" with "Employment Status: Full-time"
+    // onto one line, breaking regex extraction. We split by page midpoint so each
+    // column's fields land on separate lines.
     let rawText = '';
     for (let p = 1; p <= pdf.numPages; p++) {
       const page    = await pdf.getPage(p);
       const content = await page.getTextContent();
-      // Group by line (same Y position ±4pt), sort lines top-to-bottom, items left-to-right
-      const byLine = {};
+      const vp      = page.getViewport({ scale: 1 });
+      const midX    = vp.width / 2;
+
+      const leftCol = {}, rightCol = {};
       for (const item of content.items) {
-        const y = Math.round(item.transform[5] / 4) * 4;
-        if (!byLine[y]) byLine[y] = [];
-        byLine[y].push(item);
+        if (!item.str.trim()) continue;
+        const y   = Math.round(item.transform[5] / 4) * 4;
+        const col = item.transform[4] < midX ? leftCol : rightCol;
+        if (!col[y]) col[y] = [];
+        col[y].push(item);
       }
-      const sortedLines = Object.keys(byLine).map(Number).sort((a,b)=>b-a);
-      for (const y of sortedLines) {
-        const line = byLine[y].sort((a,b) => a.transform[4]-b.transform[4]);
-        rawText += line.map(i => i.str).join(' ') + '\n';
+      // Left column top-to-bottom, then right column top-to-bottom
+      for (const col of [leftCol, rightCol]) {
+        const sortedY = Object.keys(col).map(Number).sort((a, b) => b - a);
+        for (const y of sortedY) {
+          const line = col[y].sort((a, b) => a.transform[4] - b.transform[4]);
+          const txt  = line.map(i => i.str).join(' ').trim();
+          if (txt) rawText += txt + '\n';
+        }
       }
     }
 
@@ -1538,19 +1550,20 @@ function parseRentalAppText(raw) {
   const t = raw.replace(/[ \t]+/g, ' ').replace(/\r/g, '');
 
   // ── Core helpers ──────────────────────────────────────────────────────────
-  // Try regex array, return first captured group that looks like a real value
-  function get(pats, maxLen = 100) {
+  // NOTE: get() uses ACTUAL regexes passed in — never pass them through after()
+  // because after() ESCAPES its label argument (it's for literal strings only).
+  function get(pats, maxLen = 120) {
     for (const p of pats) {
       const m = t.match(p);
       if (m && m[1]) {
-        const v = m[1].trim().replace(/\s{2,}/g,' ').replace(/^[:\|\s]+|[:\|\s]+$/g,'');
+        const v = m[1].trim().replace(/\s{2,}/g, ' ').replace(/^[:\|\s]+|[:\|\s]+$/g, '');
         if (v.length >= 1 && v.length <= maxLen) return v;
       }
     }
     return '';
   }
 
-  // Find the value that follows a label (handles "Label: Value" and "Label Value" patterns)
+  // after() is for LITERAL label strings only — no regex special chars!
   function after(label, maxLen = 100) {
     const e = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     return get([
@@ -1559,25 +1572,51 @@ function parseRentalAppText(raw) {
     ], maxLen);
   }
 
-  // Find Yes/No answer within 400 chars of a question keyword
+  // yesNo: keyword must be a LITERAL string (no regex special chars).
+  // Searches for keyword + "Yes" or "No" within 600 chars.
   function yesNo(keyword) {
     const e = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const re = new RegExp(e + '([\\s\\S]{0,400}?)\\b(Yes|No)\\b', 'i');
+    const re = new RegExp(e + '[\\s\\S]{0,600}?\\b(Yes|No)\\b', 'i');
     const m = t.match(re);
-    return m ? m[2] : '';
+    if (m) return m[1];
+    // Also check for Agree/Disagree phrasing
+    const re2 = new RegExp(e + '[\\s\\S]{0,600}?\\b(Agree|Disagree)\\b', 'i');
+    const m2 = t.match(re2);
+    if (m2) return m2[1] === 'Agree' ? 'Yes' : 'No';
+    return '';
   }
 
-  // All phone numbers found in document (returns array)
+  // yn2: try multiple literal keyword strings
+  function yn2(kws) {
+    for (const k of kws) { const v = yesNo(k); if (v) return v; }
+    return '';
+  }
+
+  // Wage helper: strip $ and commas, return number
+  function wage(pats) {
+    const v = get(pats);
+    if (!v) return 0;
+    return parseFloat(v.replace(/[$,\s]/g, '')) || 0;
+  }
+
+  // Clean: remove trailing phone/wage/salary artifacts captured on same PDF line
+  function stripTrailing(v) {
+    return v
+      .replace(/\s*(?:Phone|Tel|Ph|Cell|Sup(?:ervisor)?)[.:\s].*$/i, '')
+      .replace(/\s*(?:Monthly|Gross|Wage|Salary|Income|Rate|Pay|\$)[\s\S]*$/i, '')
+      .trim();
+  }
+
+  // ── Collect all phones and emails in the document ─────────────────────────
   const allPhones = [];
   const phoneRe = /\b(\(?\d{3}\)?[\s.\-]\d{3}[\s.\-]\d{4})\b/g;
-  let pm; while ((pm = phoneRe.exec(t)) !== null) allPhones.push(pm[1].trim());
+  let pm2; while ((pm2 = phoneRe.exec(t)) !== null) allPhones.push(pm2[1].trim());
 
-  // All emails
   const allEmails = [];
   const emailRe = /\b([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,6})\b/g;
   let em; while ((em = emailRe.exec(t)) !== null) allEmails.push(em[1]);
 
-  // ── Field extraction ──────────────────────────────────────────────────────
+  // ── Contact ───────────────────────────────────────────────────────────────
   const email1 = get([/[Ee]-?[Mm]ail\s*:\s*([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,6})/]) || allEmails[0] || '';
   const email2 = allEmails.find(e => e !== email1) || '';
 
@@ -1591,160 +1630,301 @@ function parseRentalAppText(raw) {
     /Alt(?:ernate)?\s*(?:Phone|#)?\s*:\s*([0-9()\s.\-+]{7,20})/i,
     /Work\s*(?:Phone|#)?\s*:\s*([0-9()\s.\-+]{7,20})/i,
     /Phone\s*(?:#|No\.?|2)\s*:\s*([0-9()\s.\-+]{7,20})/i,
-  ]) || (allPhones[1] !== phone1 ? allPhones[1] : '') || '';
+  ]) || (allPhones[1] && allPhones[1] !== phone1 ? allPhones[1] : '') || '';
 
-  // Wage helper: strip $ and commas, return number
-  function wage(pats) {
-    const v = get(pats);
-    if (!v) return 0;
-    return parseFloat(v.replace(/[$,\s]/g,'')) || 0;
-  }
+  // ── Employment: supervisor name — must stop before "Phone" on same line ───
+  const empSupervisorRaw = get([
+    /Supervisor['']?s?\s*Name\s*:\s*([^\n]{2,70})/i,
+    /Name\s+of\s+Supervisor\s*:\s*([^\n]{2,70})/i,
+    /Supervisor\s*:\s*([^\n]{2,70})/i,
+  ]);
+  const empSupervisor = stripTrailing(empSupervisorRaw);
 
-  // Yes/No with multiple keyword variants
-  function yn2(kws) {
-    for (const k of kws) { const v = yesNo(k); if (v) return v; }
-    return '';
-  }
+  // ── Employment: length — must stop before "Wage/Salary/Monthly" on same line
+  const empLengthRaw = get([
+    /Length\s+of\s+Employment\s*:\s*([^\n]{2,60})/i,
+    /How\s+long\s+(?:at|employed|with)\s*:\s*([^\n]{2,60})/i,
+    /Duration\s+of\s+Employment\s*:\s*([^\n]{2,60})/i,
+    /Time\s+with\s+(?:this\s+)?(?:Employer|Company)\s*:\s*([^\n]{2,60})/i,
+    /Employment\s+Duration\s*:\s*([^\n]{2,60})/i,
+  ]);
+  const empLength = stripTrailing(empLengthRaw);
 
-  // Reference helper: extract name/phone/relationship for reference N
-  function ref(n) {
-    const sec = (() => {
-      // Try to isolate the section for reference N
-      const re = new RegExp('Reference\\s*' + n + '[\\s\\S]{0,600}?(?=Reference\\s*' + (n+1) + '|Emergency|$)', 'i');
-      const m = t.match(re);
-      return m ? m[0] : '';
-    })();
-    if (!sec && n > 1) return { name:'', rel:'', phone:'' };
-    const src = sec || t;
-    const nameP = n === 1
-      ? [/Reference\s*1\s*(?:Name)?\s*:\s*([^\n]{2,50})/i, /(?:Name|Referee)\s*:\s*([^\n]{2,50})/i]
-      : [new RegExp('Reference\\s*' + n + '\\s*(?:Name)?\\s*:\\s*([^\\n]{2,50})', 'i')];
-    const name  = get(nameP.map(p => { try { return p; } catch(e){return /^$/;} }));
-    const phone = (() => {
-      const pm = src.match(/\b(\(?\d{3}\)?[\s.\-]\d{3}[\s.\-]\d{4})\b/);
-      return pm ? pm[1] : '';
-    })();
-    const rel = get([/Rel(?:ationship)?\s*:\s*([^\n]{2,30})/i], 30);
-    return { name, rel, phone };
-  }
+  // ── Co-applicant employment: same fixes ───────────────────────────────────
+  const coEmpSupervisorRaw = get([
+    /Co.{0,20}Supervisor['']?s?\s*Name\s*:\s*([^\n]{2,70})/i,
+    /Co.{0,20}Name\s+of\s+Supervisor\s*:\s*([^\n]{2,70})/i,
+    /Co.{0,20}Supervisor\s*:\s*([^\n]{2,70})/i,
+  ]);
+  const coEmpSupervisor = stripTrailing(coEmpSupervisorRaw);
 
-  const r1 = {
-    name:  get([/Reference\s*(?:#\s*)?1\s*(?:Name)?\s*:\s*([^\n]{2,50})/i,
-                /Ref(?:erence)?\s*1[:\s]+([^\n]{2,50})/i]),
-    phone: get([/Reference\s*(?:#\s*)?1[^\n]*Phone[^\n]*:\s*([0-9()\s.\-]{7,20})/i]),
-    rel:   get([/Reference\s*(?:#\s*)?1[^\n]*Rel[^\n]*:\s*([^\n]{2,30})/i]),
-  };
-  const r2 = {
-    name:  get([/Reference\s*(?:#\s*)?2\s*(?:Name)?\s*:\s*([^\n]{2,50})/i]),
-    phone: get([/Reference\s*(?:#\s*)?2[^\n]*Phone[^\n]*:\s*([0-9()\s.\-]{7,20})/i]),
-    rel:   get([/Reference\s*(?:#\s*)?2[^\n]*Rel[^\n]*:\s*([^\n]{2,30})/i]),
-  };
-  const r3 = {
-    name:  get([/Reference\s*(?:#\s*)?3\s*(?:Name)?\s*:\s*([^\n]{2,50})/i]),
-    phone: get([/Reference\s*(?:#\s*)?3[^\n]*Phone[^\n]*:\s*([0-9()\s.\-]{7,20})/i]),
-    rel:   get([/Reference\s*(?:#\s*)?3[^\n]*Rel[^\n]*:\s*([^\n]{2,30})/i]),
-  };
+  const coEmpLengthRaw = get([
+    /Co.{0,20}Length\s+of\s+Employment\s*:\s*([^\n]{2,60})/i,
+    /Co.{0,20}How\s+long\s+(?:at|employed)\s*:\s*([^\n]{2,60})/i,
+  ]);
+  const coEmpLength = stripTrailing(coEmpLengthRaw);
 
+  // ── Field extraction ──────────────────────────────────────────────────────
   return {
     // ── Contact ───────────────────────────────────────────────────────────
     email:  email1,
     phone1, phone2,
-    dob:    get([/(?:Date\s+of\s+Birth|D\.?O\.?B\.?|Birthdate)\s*:\s*([0-9\/\-\.]{6,12})/i]),
-    sin:    get([/\bS\.?I\.?N\.?\s*:\s*([0-9xX]{3}[\s\-]?[0-9xX]{3}[\s\-]?[0-9xX]{3})/i]),
-    currentAddress: after('Current Address', 120) || after('Present Address', 120) ||
-                    after('Current Residential', 120),
+    dob: get([
+      /(?:Date\s+of\s+Birth|D\.?O\.?B\.?|Birth\s+Date|Birthdate)\s*:\s*([0-9\/\-\.]{6,12})/i,
+      /\bDOB\b[:\s]+([0-9\/\-\.]{6,12})/i,
+      /\b((?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4})\b/i,
+    ]),
+    sin: get([/\bS\.?I\.?N\.?\s*:\s*([0-9xX*]{3}[\s\-]?[0-9xX*]{3}[\s\-]?[0-9xX*]{3})/i]),
+    currentAddress: get([
+      /Current\s+(?:Residential\s+)?Address\s*:\s*([^\n]{5,120})/i,
+      /Present\s+Address\s*:\s*([^\n]{5,120})/i,
+      /Residential\s+Address\s*:\s*([^\n]{5,120})/i,
+      /Home\s+Address\s*:\s*([^\n]{5,120})/i,
+    ]),
 
     // ── Property & Occupancy ──────────────────────────────────────────────
-    propertyAddress:  after('Property Address', 120) || after('Address of Unit', 120) ||
-                      after('Unit Applied For', 120) || after('Rental Address', 120),
-    propertyManager:  after('Property Manager', 60),
-    desiredOccupancy: after('Desired Occupancy', 30) || after('Move.?in Date', 30) ||
-                      after('Desired Move', 30) || after('Occupancy Date', 30),
-    maxOccupants: get([/(?:Max(?:imum)?|Total)\s+(?:No\.?\s+of\s+)?Occupants?\s*:\s*([0-9]{1,2})/i,
-                       /Occupants?\s*:\s*([0-9]{1,2})/i]),
-    adults:   get([/(?:No\.?\s+of\s+)?Adults?\s*:\s*([0-9]{1,2})/i,
-                   /#\s*of\s*Adults?\s*:\s*([0-9]{1,2})/i]),
-    children: get([/(?:No\.?\s+of\s+)?Children\s*:\s*([0-9]{1,2})/i,
-                   /#\s*of\s*Children\s*:\s*([0-9]{1,2})/i]),
+    propertyAddress: get([
+      /Property\s+Address\s*:\s*([^\n]{5,120})/i,
+      /Address\s+of\s+(?:Rental\s+)?Unit\s*:\s*([^\n]{5,120})/i,
+      /Unit\s+Applied\s+For\s*:\s*([^\n]{5,120})/i,
+      /Rental\s+Address\s*:\s*([^\n]{5,120})/i,
+    ]),
+    propertyManager: get([
+      /Property\s+Manager\s*:\s*([^\n]{2,60})/i,
+      /Assigned\s+(?:Property\s+)?Manager\s*:\s*([^\n]{2,60})/i,
+      /Manager\s+Name\s*:\s*([^\n]{2,60})/i,
+    ]),
+    desiredOccupancy: get([
+      /(?:Desired\s+)?(?:Move.?[Ii]n|Occupancy)\s+Date\s*:\s*([^\n]{2,30})/i,
+      /Date\s+of\s+(?:Move.?[Ii]n|Occupancy)\s*:\s*([^\n]{2,30})/i,
+      /(?:Possession|Entry|Tenancy\s+Start)\s+Date\s*:\s*([^\n]{2,30})/i,
+      /Desired\s+Occupancy\s*:\s*([^\n]{2,30})/i,
+      /When\s+(?:do\s+you\s+)?(?:want|need|wish)\s+to\s+move\s*:\s*([^\n]{2,30})/i,
+      /Move.?[Ii]n\s*:\s*([^\n]{2,30})/i,
+    ]),
+    maxOccupants: get([
+      /(?:Max(?:imum)?|Total)\s+(?:No\.?\s+of\s+)?Occupants?\s*:\s*([0-9]{1,2})/i,
+      /Total\s+(?:Number\s+of\s+)?(?:People|Persons|Occupants?)\s+in\s+Household\s*:\s*([0-9]{1,2})/i,
+      /Occupants?\s*:\s*([0-9]{1,2})/i,
+      /Total\s+in\s+Household\s*:\s*([0-9]{1,2})/i,
+      /Number\s+in\s+Home\s*:\s*([0-9]{1,2})/i,
+    ]),
+    adults: get([
+      /(?:Number\s+of\s+|No\.?\s+of\s+|#\s*of\s*)?Adults?\s*(?:\(18\+\))?\s*:\s*([0-9]{1,2})/i,
+      /Adults?\s+in\s+Household\s*:\s*([0-9]{1,2})/i,
+      /How\s+many\s+adults?\s*:\s*([0-9]{1,2})/i,
+    ]),
+    children: get([
+      /(?:Number\s+of\s+|No\.?\s+of\s+|#\s*of\s*)?Children\s*:\s*([^\n]{1,60})/i,
+      /Children\s+(?:Names?\s+and\s+)?Ages?\s*:\s*([^\n]{1,80})/i,
+      /How\s+many\s+children\s*:\s*([0-9]{1,2})/i,
+      /(?:Kids?|Minors?)\s*:\s*([^\n]{1,60})/i,
+    ]),
 
     // ── Primary Employment ────────────────────────────────────────────────
-    empStatus:    after('Employment Status', 40),
-    empEmployer:  after('Name of Employer', 70) || after('Employer', 70),
-    empAddress:   after('Address of Employer', 120) || after('Employer Address', 120),
-    empPosition:  after('Position', 50) || after('Title', 50) || after('Occupation', 50),
-    empLength:    after('Length of Employment', 40) || after('How long at this', 40) ||
-                  after('Duration of Employment', 40),
-    empWage:      wage([/(?:Monthly\s+)?Gross\s+(?:Income|Wage|Salary)\s*:\s*\$?\s*([\d,]+)/i,
-                        /(?:Monthly\s+)?(?:Income|Wage|Salary)\s*:\s*\$?\s*([\d,]+)/i,
-                        /\$\s*([\d,]{3,8})\s*\/?\s*month/i]),
-    empSupervisor: after('Supervisor', 60) || after('Name of Supervisor', 60),
-    empSupPhone:   get([/Supervisor[^\n]*Phone\s*:\s*([0-9()\s.\-]{7,20})/i,
-                        /Phone\s+of\s+Supervisor\s*:\s*([0-9()\s.\-]{7,20})/i]),
-    empOther:      after('Other Income', 100) || after('Additional Income', 100) ||
-                   after('Other Source', 100),
+    empStatus: get([
+      /Employment\s+Status\s*:\s*([^\n]{2,40})/i,
+      /Type\s+of\s+Employment\s*:\s*([^\n]{2,40})/i,
+      /Employed\s+as\s*:\s*([^\n]{2,40})/i,
+      /Current\s+Employment\s*:\s*([^\n]{2,40})/i,
+    ]) || (() => {
+      if (/\bFull.?[Tt]ime\b/.test(t)) return 'Full-time';
+      if (/\bPart.?[Tt]ime\b/.test(t)) return 'Part-time';
+      if (/\bSelf.?[Ee]mployed\b/.test(t)) return 'Self-employed';
+      if (/\bUnemployed\b/i.test(t)) return 'Unemployed';
+      if (/\bRetired\b/i.test(t)) return 'Retired';
+      return '';
+    })(),
+    empEmployer: get([
+      /(?:Name\s+of\s+)?Employer['']?s?\s+Name\s*:\s*([^\n]{2,70})/i,
+      /Name\s+of\s+(?:Current\s+)?Employer\s*:\s*([^\n]{2,70})/i,
+      /Employer['']?s?\s+(?:Name\s*)?:\s*([^\n]{2,70})/i,
+      /Company\s+Name\s*:\s*([^\n]{2,70})/i,
+      /Business\s+Name\s*:\s*([^\n]{2,70})/i,
+    ]),
+    empAddress: get([
+      /(?:Address\s+of\s+|Employer['']?s?\s+)?(?:Employer|Business|Work|Company)\s+Address\s*:\s*([^\n]{5,120})/i,
+      /Work\s+Location\s*:\s*([^\n]{5,120})/i,
+    ]),
+    empPosition: get([
+      /Position\s*[\/\\]\s*Title\s*:\s*([^\n]{2,60})/i,
+      /(?:Job\s+)?Title\s*:\s*([^\n]{2,60})/i,
+      /Position\s*:\s*([^\n]{2,60})/i,
+      /Occupation\s*:\s*([^\n]{2,60})/i,
+      /Job\s+Description\s*:\s*([^\n]{2,60})/i,
+    ]).replace(/\s*(?:Monthly|Wage|Salary|Employment|Employ|\$)[\s\S]*$/i, '').trim(),
+    empLength,
+    empWage: wage([
+      /(?:Monthly\s+)?Gross\s+(?:Income|Wage|Salary)\s*:\s*\$?\s*([\d,]+)/i,
+      /Monthly\s+(?:Income|Wage|Salary|Pay|Rate)\s*:\s*\$?\s*([\d,]+)/i,
+      /(?:Income|Wage|Salary)\s*:\s*\$?\s*([\d,]+)/i,
+      /\$\s*([\d,]{3,8})\s*\/?\s*(?:month|mo\.?|mth)/i,
+    ]),
+    empSupervisor,
+    empSupPhone: get([
+      /Supervisor['']?s?\s*(?:Phone|Tel|Cell|#)\s*(?:No\.?)?\s*:\s*([0-9()\s.\-]{7,20})/i,
+      /(?:Phone|Tel)\s+(?:No\.?\s+)?of\s+Supervisor\s*:\s*([0-9()\s.\-]{7,20})/i,
+    ]),
+    empOther: get([
+      /Other\s+(?:Source\s+of\s+)?Income\s*:\s*([^\n]{2,120})/i,
+      /Additional\s+Income\s*:\s*([^\n]{2,120})/i,
+      /Other\s+Employment\s*:\s*([^\n]{2,120})/i,
+    ]),
 
     // ── Co-Applicant ──────────────────────────────────────────────────────
-    coName:  after('Co-?Applicant', 60) || after('Joint Applicant', 60) ||
-             after('Second Applicant', 60),
-    coDob:   get([/Co.{0,20}(?:Date\s+of\s+Birth|DOB)\s*:\s*([0-9\/\-\.]{6,12})/i]),
-    coSIN:   get([/Co.{0,20}S\.?I\.?N\.?\s*:\s*([0-9xX]{3}[\s\-]?[0-9xX]{3}[\s\-]?[0-9xX]{3})/i]),
-    coEmail: get([/Co.{0,30}[Ee]mail\s*:\s*([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,6})/i]) || email2,
-    coPhone1: get([/Co.{0,30}(?:Cell|Phone)\s*:\s*([0-9()\s.\-]{7,20})/i]),
-    coCurrentAddress: get([/Co.{0,30}(?:Current|Present)\s+Address\s*:\s*([^\n]{5,120})/i]),
-    coEmpStatus:   get([/Co.{0,30}Employment\s+Status\s*:\s*([^\n]{2,40})/i]),
-    coEmpEmployer: get([/Co.{0,30}(?:Name\s+of\s+)?Employer\s*:\s*([^\n]{2,70})/i]),
-    coEmpAddress:  get([/Co.{0,30}(?:Address\s+of\s+)?Employer\s+Address\s*:\s*([^\n]{5,120})/i]),
-    coEmpPosition: get([/Co.{0,30}Position\s*:\s*([^\n]{2,50})/i]),
-    coEmpLength:   get([/Co.{0,30}Length\s+of\s+Employment\s*:\s*([^\n]{2,40})/i]),
-    coEmpWage:     wage([/Co.{0,30}(?:Gross\s+)?(?:Income|Wage|Salary)\s*:\s*\$?\s*([\d,]+)/i]),
-    coEmpSupervisor: get([/Co.{0,30}Supervisor\s*:\s*([^\n]{2,60})/i]),
-    coEmpSupPhone:   get([/Co.{0,30}Supervisor[^\n]*Phone\s*:\s*([0-9()\s.\-]{7,20})/i]),
-    coEmpOther:      get([/Co.{0,30}Other\s+Income\s*:\s*([^\n]{2,100})/i]),
+    coName: get([
+      /Co.?[Aa]pplicant['']?s?\s+(?:Full\s+)?(?:Legal\s+)?Name\s*:\s*([^\n]{2,60})/i,
+      /Joint\s+Applicant\s*:\s*([^\n]{2,60})/i,
+      /Second\s+Applicant\s*:\s*([^\n]{2,60})/i,
+      /Co.?[Aa]pplicant\s*:\s*([^\n]{2,60})/i,
+    ]),
+    coDob: get([/Co.{0,25}(?:Date\s+of\s+Birth|D\.?O\.?B\.?|Birth\s+Date)\s*:\s*([0-9\/\-\.]{6,12})/i]),
+    coSIN: get([/Co.{0,25}S\.?I\.?N\.?\s*:\s*([0-9xX*]{3}[\s\-]?[0-9xX*]{3}[\s\-]?[0-9xX*]{3})/i]),
+    coEmail: get([/Co.{0,35}[Ee]mail\s*:\s*([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,6})/i]) || email2,
+    coPhone1: get([
+      /Co.{0,25}(?:Cell|Mobile)\s*(?:Phone|#)?\s*:\s*([0-9()\s.\-]{7,20})/i,
+      /Co.{0,25}Phone\s*(?:#|No\.?|1)?\s*:\s*([0-9()\s.\-]{7,20})/i,
+    ]),
+    coPhone2: get([
+      /Co.{0,25}(?:Home|Alt(?:ernate)?|Work)\s*(?:Phone|#)?\s*:\s*([0-9()\s.\-]{7,20})/i,
+    ]),
+    coCurrentAddress: get([
+      /Co.{0,25}(?:Current|Present|Residential)\s+Address\s*:\s*([^\n]{5,120})/i,
+      /Co.{0,25}Address\s*:\s*([^\n]{5,120})/i,
+    ]),
+    coEmpStatus: get([
+      /Co.{0,25}Employment\s+Status\s*:\s*([^\n]{2,40})/i,
+      /Co.{0,25}Type\s+of\s+Employment\s*:\s*([^\n]{2,40})/i,
+    ]),
+    coEmpEmployer: get([
+      /Co.{0,25}(?:Name\s+of\s+)?Employer['']?s?\s+Name\s*:\s*([^\n]{2,70})/i,
+      /Co.{0,25}Name\s+of\s+Employer\s*:\s*([^\n]{2,70})/i,
+      /Co.{0,25}Employer['']?s?\s*:\s*([^\n]{2,70})/i,
+    ]),
+    coEmpAddress: get([
+      /Co.{0,25}(?:Employer['']?s?\s+)?Address\s+of\s+Employer\s*:\s*([^\n]{5,120})/i,
+      /Co.{0,25}(?:Work|Business|Company)\s+Address\s*:\s*([^\n]{5,120})/i,
+    ]),
+    coEmpPosition: get([
+      /Co.{0,25}Position\s*[\/\\]?\s*Title\s*:\s*([^\n]{2,60})/i,
+      /Co.{0,25}(?:Job\s+)?(?:Title|Position|Occupation)\s*:\s*([^\n]{2,60})/i,
+    ]),
+    coEmpLength,
+    coEmpWage: wage([
+      /Co.{0,25}(?:Monthly\s+)?Gross\s+(?:Income|Wage|Salary)\s*:\s*\$?\s*([\d,]+)/i,
+      /Co.{0,25}Monthly\s+(?:Income|Wage|Salary|Pay)\s*:\s*\$?\s*([\d,]+)/i,
+      /Co.{0,25}(?:Income|Wage|Salary)\s*:\s*\$?\s*([\d,]+)/i,
+    ]),
+    coEmpSupervisor,
+    coEmpSupPhone: get([
+      /Co.{0,25}Supervisor['']?s?\s*(?:Phone|Tel|#)\s*:\s*([0-9()\s.\-]{7,20})/i,
+    ]),
+    coEmpOther: get([
+      /Co.{0,25}Other\s+(?:Source\s+of\s+)?Income\s*:\s*([^\n]{2,120})/i,
+    ]),
 
     // ── Previous Tenancy ──────────────────────────────────────────────────
-    prevAddress:       after('Previous (?:Rental )?Address', 120) ||
-                       after('Former Address', 120) || after('Last Address', 120),
-    prevLandlordName:  after('(?:Previous |Former )?Landlord(?:\s+Name)?', 70),
-    prevLandlordPhone: get([/(?:Landlord|Previous)[^\n]*Phone\s*:\s*([0-9()\s.\-]{7,20})/i]),
-    prevStay:          after('(?:Length|Duration)\s+of\s+(?:Tenancy|Stay)', 40) ||
-                       after('How\s+[Ll]ong', 40),
-    prevRent:          get([/(?:Previous|Monthly)\s+Rent\s*:\s*\$?\s*([\d,]{2,8})/i,
-                            /Rent\s*:\s*\$\s*([\d,]{2,8})/i]),
-    prevReason:        after('Reason\s+for\s+Leaving', 150) ||
-                       after('Why\s+(?:are\s+you\s+)?[Ll]eaving', 150),
+    // NOTE: ALL patterns here use get([/regex/]) not after() because the labels
+    // contain regex special chars or have multi-word variants.
+    prevAddress: get([
+      /Previous\s+(?:Rental\s+)?Address\s*:\s*([^\n]{5,120})/i,
+      /Former\s+(?:Rental\s+)?Address\s*:\s*([^\n]{5,120})/i,
+      /Last\s+(?:Known\s+)?Address\s*:\s*([^\n]{5,120})/i,
+      /Previous\s+(?:Residence|Home)\s*:\s*([^\n]{5,120})/i,
+    ]),
+    prevLandlordName: get([
+      /(?:Previous\s+|Former\s+)?Landlord['']?s?\s+Name\s*:\s*([^\n]{2,70})/i,
+      /(?:Previous\s+|Former\s+)?Landlord\s*:\s*([^\n]{2,70})/i,
+      /Name\s+of\s+(?:Previous\s+|Former\s+)?Landlord\s*:\s*([^\n]{2,70})/i,
+    ]),
+    prevLandlordPhone: get([
+      /(?:Previous\s+|Former\s+)?Landlord['']?s?\s+(?:Phone|Tel|#)\s*(?:No\.?)?\s*:\s*([0-9()\s.\-]{7,20})/i,
+      /Landlord[^\n]*(?:Phone|Tel)\s*:\s*([0-9()\s.\-]{7,20})/i,
+    ]),
+    prevStay: get([
+      /(?:Length|Duration)\s+of\s+(?:Tenancy|Stay|Rental)\s*:\s*([^\n]{2,40})/i,
+      /(?:Tenancy|Rental)\s+Duration\s*:\s*([^\n]{2,40})/i,
+      /Period\s+of\s+(?:Tenancy|Rental)\s*:\s*([^\n]{2,40})/i,
+      /How\s+long\s+(?:at|have\s+you\s+(?:been|lived)|did\s+you\s+(?:live|stay))\s*:\s*([^\n]{2,40})/i,
+      /(?:Time|Years?|Months?)\s+at\s+(?:Previous\s+)?Address\s*:\s*([^\n]{2,40})/i,
+    ]),
+    prevRent: get([
+      /(?:Previous|Current|Monthly)\s+Rent(?:al)?\s*:\s*\$?\s*([\d,]{2,8})/i,
+      /Rent\s+(?:Paid|Amount)\s*:\s*\$?\s*([\d,]{2,8})/i,
+      /Monthly\s+Rent\s*:\s*\$?\s*([\d,]{2,8})/i,
+    ]),
+    prevReason: get([
+      /Reason\s+for\s+(?:Leaving|Moving|Vacating)\s*:\s*([^\n]{2,150})/i,
+      /Why\s+(?:are\s+you|did\s+you)\s+(?:leaving|moving)\s*:\s*([^\n]{2,150})/i,
+      /Reason\s+for\s+Vacating\s*:\s*([^\n]{2,150})/i,
+      /Reason\s+for\s+Move\s*:\s*([^\n]{2,150})/i,
+    ]),
 
     // ── Credit / Background ───────────────────────────────────────────────
-    crBankruptcy:   yn2(['bankruptcy','declared bankruptcy','bankrupt']),
-    crEviction:     yn2(['evict','been evicted','eviction notice']),
-    crLatePayments: yn2(['late (?:rental )?payments?','late rent','overdue rent']),
-    crRefused:      yn2(['refused to pay','refus(?:ed|al) (?:to )?pay']),
-    crExplanation:  after('(?:Explanation|Please Explain|If yes)', 300),
+    // yn2 ONLY uses simple literal strings — no regex special chars!
+    crBankruptcy:   yn2(['bankruptcy', 'declared bankruptcy', 'bankrupt']),
+    crEviction:     yn2(['evicted', 'been evicted', 'eviction', 'evict']),
+    crLatePayments: yn2(['late rental payments', 'late rent payments', 'late payments', 'overdue rent', 'late rent']),
+    crRefused:      yn2(['refused to pay', 'refusal to pay', 'refused rent']),
+    crExplanation:  get([
+      /(?:Explanation|Please\s+Explain|If\s+Yes[,\s]+explain)\s*:\s*([^\n]{2,300})/i,
+      /Please\s+(?:provide\s+)?details?\s*:\s*([^\n]{2,300})/i,
+    ]),
 
-    // ── Additional ────────────────────────────────────────────────────────
-    hasPets:       yn2(['(?:have any )?pets?','do you have.*pet']),
-    petDesc:       after('(?:Type|Kind|Description)\s+of\s+[Pp]et', 80) ||
-                   after('Pet\s+(?:Type|Description|Breed)', 80),
-    smokes:        yn2(['smok(?:e|ing|er)','does anyone.*smok','household.*smok']),
-    hasInsurance:  yn2(['tenant insurance','renter.?s insurance','do you have.*insurance']),
-    jointCreditConsent: yn2(['joint credit','credit check consent','authorize.*credit']),
+    // ── Rental Profile (simple literal keywords for yn2) ──────────────────
+    hasPets:  yn2(['pets', 'have a pet', 'own a pet', 'any pets', 'pet allowed']),
+    petDesc:  get([
+      /(?:Type|Kind|Description|Breed)\s+of\s+Pet\s*:\s*([^\n]{2,80})/i,
+      /Pet\s+(?:Type|Description|Breed|Details?)\s*:\s*([^\n]{2,80})/i,
+      /Describe\s+(?:your\s+)?Pet\s*:\s*([^\n]{2,80})/i,
+    ]),
+    smokes:   yn2(['smoking', 'smoke in', 'smoker', 'does anyone smoke', 'household smoke']),
+    hasInsurance: yn2(['tenant insurance', 'renters insurance', 'renter insurance', 'have insurance', 'insurance coverage']),
+    jointCreditConsent: yn2(['joint credit', 'credit check consent', 'authorize credit', 'credit authorization']),
 
     // ── Acknowledgements ──────────────────────────────────────────────────
-    ackNoPetsPermission: yn2(['written permission','pets.*barbeque','barbeque.*written']),
-    ackPetDeposit:       yn2(['pet.*deposit','damage deposit.*pet','\\$300.*pet']),
-    ackInfoTrue:         yn2(['information.*true','declared.*true','true and correct']),
-    ackAuthorizeObtain:  yn2(['authorize.*obtain','landlord.*obtain','obtain.*information']),
-    ackAuthorizeDisclose: yn2(['reporting agenc','disclose.*information','authorize.*disclose']),
+    ackNoPetsPermission:  yn2(['written permission', 'pets barbeque', 'bbq written', 'barbeque waterbed']),
+    ackPetDeposit:        yn2(['pet deposit', 'damage deposit pet', '$300 pet', 'pet damage deposit']),
+    ackInfoTrue:          yn2(['information true', 'declared true', 'true and correct', 'info true', 'declare true']),
+    ackAuthorizeObtain:   yn2(['authorize landlord', 'authorize to obtain', 'obtain information', 'landlord obtain', 'obtain credit']),
+    ackAuthorizeDisclose: yn2(['reporting agency', 'disclose information', 'authorize disclose', 'reporting agencies', 'authorize reporting']),
 
     // ── References ────────────────────────────────────────────────────────
-    ref1Name:  r1.name,  ref1Phone: r1.phone,  ref1Rel: r1.rel,
-    ref2Name:  r2.name,  ref2Phone: r2.phone,  ref2Rel: r2.rel,
-    ref3Name:  r3.name,  ref3Phone: r3.phone,  ref3Rel: r3.rel,
+    ref1Name:  get([
+      /Reference\s*#?\s*1[\s,]*(?:Name\s*)?:\s*([^\n]{2,60})/i,
+      /1[.)]\s+(?:Name\s*:\s*)?([A-Z][^\n]{2,50})/,
+    ]),
+    ref1Phone: get([/Reference\s*#?\s*1[^\n]{0,40}(?:Phone|Tel|#)[^\n]{0,20}:\s*([0-9()\s.\-]{7,20})/i]),
+    ref1Rel:   get([/Reference\s*#?\s*1[^\n]{0,40}Rel(?:ationship)?\s*:\s*([^\n]{2,40})/i]),
+    ref2Name:  get([
+      /Reference\s*#?\s*2[\s,]*(?:Name\s*)?:\s*([^\n]{2,60})/i,
+      /2[.)]\s+(?:Name\s*:\s*)?([A-Z][^\n]{2,50})/,
+    ]),
+    ref2Phone: get([/Reference\s*#?\s*2[^\n]{0,40}(?:Phone|Tel|#)[^\n]{0,20}:\s*([0-9()\s.\-]{7,20})/i]),
+    ref2Rel:   get([/Reference\s*#?\s*2[^\n]{0,40}Rel(?:ationship)?\s*:\s*([^\n]{2,40})/i]),
+    ref3Name:  get([
+      /Reference\s*#?\s*3[\s,]*(?:Name\s*)?:\s*([^\n]{2,60})/i,
+      /3[.)]\s+(?:Name\s*:\s*)?([A-Z][^\n]{2,50})/,
+    ]),
+    ref3Phone: get([/Reference\s*#?\s*3[^\n]{0,40}(?:Phone|Tel|#)[^\n]{0,20}:\s*([0-9()\s.\-]{7,20})/i]),
+    ref3Rel:   get([/Reference\s*#?\s*3[^\n]{0,40}Rel(?:ationship)?\s*:\s*([^\n]{2,40})/i]),
 
     // ── Emergency Contact ─────────────────────────────────────────────────
-    emgName:    after('Emergency Contact(?:\s+Name)?', 60),
-    emgRel:     get([/Emergency[^\n]*Rel(?:ationship)?\s*:\s*([^\n]{2,40})/i]),
-    emgPhone:   get([/Emergency[^\n]*Phone\s*:\s*([0-9()\s.\-]{7,20})/i]),
-    emgAddress: get([/Emergency[^\n]*Address\s*:\s*([^\n]{5,120})/i]),
+    emgName: get([
+      /Emergency\s+(?:Contact\s+)?(?:Person\s+)?(?:Name\s*)?:\s*([^\n]{2,60})/i,
+      /In\s+Case\s+of\s+Emergency[^\n]{0,30}:\s*([^\n]{2,60})/i,
+      /Next\s+of\s+Kin\s*(?:Name)?\s*:\s*([^\n]{2,60})/i,
+    ]),
+    emgRel: get([
+      /Emergency[^\n]{0,40}Rel(?:ationship)?\s*:\s*([^\n]{2,40})/i,
+      /Relationship\s+to\s+(?:Applicant|Tenant)\s*:\s*([^\n]{2,40})/i,
+    ]),
+    emgPhone: get([
+      /Emergency[^\n]{0,40}(?:Phone|Tel|Cell|#)\s*(?:No\.?)?\s*:\s*([0-9()\s.\-]{7,20})/i,
+    ]),
+    emgAddress: get([
+      /Emergency[^\n]{0,40}Address\s*:\s*([^\n]{5,120})/i,
+    ]),
   };
 }
 
