@@ -779,7 +779,7 @@ function fileToDraftApp(f) {
     name: name || f.name.replace(/\.pdf$/i, ''),
     propertyAddress, propertyManager: '',
     pdfParsed: false, parseVersion: '', pdfAnnFields: '',
-    desiredOccupancy: '', maxOccupants: '', adults: '', children: '',
+    desiredOccupancy: '', maxOccupants: '', adults: '', children: '', monthlyRent: 0,
     sin: '', email: '', phone1: '', phone2: '', dob: '', currentAddress: '',
     coName: '', coSIN: '', coEmail: '', coPhone1: '', coPhone2: '', coCurrentAddress: '', coDob: '',
     prevLandlordName: '', prevLandlordPhone: '', prevAddress: '', prevStay: '', prevRent: '', prevReason: '',
@@ -1212,7 +1212,8 @@ function selApp(id) {
   d.style.display = 'block';
 
   const totalIncome = (Number(a.empWage) || 0) + (parseFloat(a.coEmpWage) || 0);
-  const incomeRatio = totalIncome > 0 ? Math.round(totalIncome / 2500 * 100) : 0;
+  const rentAmt     = Number(a.monthlyRent) || 0;
+  const incomeRatio = (totalIncome > 0 && rentAmt > 0) ? Math.round(totalIncome / rentAmt * 100) : 0;
   const anyFlag = a.crBankruptcy === 'Yes' || a.crEviction === 'Yes' || a.crLatePayments === 'Yes' || a.crRefused === 'Yes';
   const pmLabel = PM_NAMES[a.pmEmail] || a.propertyManager || '';
   const isAdmin = currentUser?.role === 'admin';
@@ -1359,6 +1360,10 @@ function selApp(id) {
         ${frow('Max Occupants', a.maxOccupants, '', 'maxOccupants')}
         ${frow('Adults', a.adults, '', 'adults')}
         ${frow('Children / Dependants', a.children, '', 'children')}
+        ${(isAdmin || isPM) ? (editMode
+          ? `<div class="frow"><span class="flbl">Monthly Rent ($)</span><input class="ef-input" id="ef_monthlyRent" type="number" min="0" step="50" value="${Number(a.monthlyRent)||''}" placeholder="e.g. 2500"></div>`
+          : `<div class="frow"><span class="flbl">Monthly Rent</span><span class="fval" style="font-weight:600;color:var(--grn)">${rentAmt ? '$' + rentAmt.toLocaleString() : '<span style=\'color:var(--mut);font-weight:400\'>— set in Edit</span>'}</span></div>`
+        ) : ''}
       </div>
       <div class="scard">
         <h3><span class="icon">📋</span> Rental Profile</h3>
@@ -1393,7 +1398,7 @@ function selApp(id) {
           ? frow('Monthly Gross Income ($)', a.empWage, '', 'empWage')
           : `<div class="frow"><span class="flbl">Monthly Gross Income</span>
               <span class="fval ${incomeRatio>0?(incomeRatio>=250?'good':'warn'):''}">
-                ${a.empWage ? '$' + Number(a.empWage).toLocaleString() + (incomeRatio>0?' ('+incomeRatio+'% of $2,500 rent)':'') : '<span style="color:var(--mut);font-weight:400">—</span>'}
+                ${a.empWage ? '$' + Number(a.empWage).toLocaleString() + (incomeRatio>0?' ('+incomeRatio+'% of $'+rentAmt.toLocaleString()+'/mo rent)':'') : '<span style="color:var(--mut);font-weight:400">—</span>'}
               </span></div>`}
         ${frow('Supervisor Name', a.empSupervisor, '', 'empSupervisor')}
         ${frow('Supervisor Phone', a.empSupPhone, '', 'empSupPhone')}
@@ -2281,7 +2286,7 @@ function saveEdit(id) {
     const key = el.id.replace('ef_', '');
     let val = el.value;
     // Numeric fields — strip currency symbols and commas
-    if (key === 'empWage' || key === 'coEmpWage') {
+    if (key === 'empWage' || key === 'coEmpWage' || key === 'monthlyRent') {
       val = parseFloat(String(val).replace(/[$,\s]/g,'')) || 0;
     }
     updates[key] = val;
