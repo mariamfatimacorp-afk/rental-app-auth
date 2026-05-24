@@ -539,7 +539,7 @@ const LEASE_TEMPLATE_PATH = 'Rental Applications/Lease_Template.docx';
 const IS_DEMO    = false;
 const SP_READY   = true;
 // Bump this string whenever parseRentalAppText() changes so old cached data auto-reruns
-const PARSE_VERSION = '5';
+const PARSE_VERSION = '6';
 const SP_USE_LIST = SP_LIST !== 'YOUR_APPLICATIONS_LIST_ID';
 
 // User roles — email must match Microsoft account username (lowercase)
@@ -1700,14 +1700,18 @@ async function extractPdfData(app) {
 }
 
 function parseRentalAppText(raw) {
-  // Normalise whitespace; fix PDF split-word artifacts ("N o"→"No", "Y es"→"Yes")
+  // ── STEP 1: Normalise ────────────────────────────────────────────────────
   let t = raw.replace(/[ \t]+/g, ' ').replace(/\r/g, '');
+  // Fix PDF split-word artifacts
   t = t.replace(/\bN\s+o\b/g, 'No')
        .replace(/\bY\s+e\s*s\b/gi, 'Yes')
        .replace(/\bA\s*g\s*r\s*e\s*e\b/gi, 'Agree')
        .replace(/\bD\s*i\s*s\s*a\s*g\s*r\s*e\s*e\b/gi, 'Disagree');
+  // tClean: remove "answered YES/NO" so it doesn't falsely match credit question answers
+  const tClean = t.replace(/answered\s+(Yes|No)\b/gi, 'answered [■]');
 
-  // ── Core helpers ─────────────────────────────────────────────────────────
+  // ── STEP 2: Core helpers ─────────────────────────────────────────────────
+  // get(): search full document text
   function get(pats, maxLen = 120) {
     for (const p of pats) {
       const m = t.match(p);
@@ -1718,24 +1722,50 @@ function parseRentalAppText(raw) {
     }
     return '';
   }
-
-  // yesNo: keyword = literal string only (no regex special chars)
-  function yesNo(keyword) {
-    const e = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const re  = new RegExp(e + '[\\s\\S]{0,600}?\\b(Yes|No)\\b', 'i');
-    const re2 = new RegExp(e + '[\\s\\S]{0,600}?\\b(Agree|Disagree)\\b', 'i');
-    const m = t.match(re); if (m) return m[1];
-    const m2 = t.match(re2); if (m2) return m2[1] === 'Agree' ? 'Yes' : 'No';
+  // getIn(): search within a specific section only — returns '' if section is absent/empty
+  function getIn(sec, pats, maxLen = 120) {
+    if (!sec) return '';
+    for (const p of pats) {
+      const m = sec.match(p);
+      if (m && m[1]) {
+        const v = m[1].trim().replace(/\s{2,}/g, ' ').replace(/^[:\|\s]+|[:\|\s]+$/g, '');
+        if (v.length >= 1 && v.length <= maxLen) return v;
+      }
+    }
     return '';
   }
-  function yn2(kws) { for (const k of kws) { const v = yesNo(k); if (v) return v; } return ''; }
 
-  function wage(pats) {
-    const v = get(pats); if (!v) return 0;
-    return parseFloat(v.replace(/[$,\s]/g, '')) || 0;
+  // yesNo(): STANDALONE DETECTION — avoids "answered YES" and "no misrepresentations" false triggers.
+  // Searches tClean (which has "answered YES/NO" removed) for Yes/No on its OWN line.
+  function yesNo(keyword, src) {
+    const e = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const s = src ? src.replace(/answered\s+(Yes|No)\b/gi, 'answered [■]') : tClean;
+    // 1st try: standalone Yes/No on its own line (prevents matching words in sentences)
+    const reSA = new RegExp(e + '[\\s\\S]{0,700}?\\n[ \\t]*(Yes|No)[ \\t]*(?=\\n|$)', 'im');
+    const mSA = s.match(reSA); if (mSA) return mSA[1];
+    // 2nd try: standalone Agree/Disagree on its own line
+    const reAG = new RegExp(e + '[\\s\\S]{0,700}?\\n[ \\t]*(Agree|Disagree)[ \\t]*(?=\\n|$)', 'im');
+    const mAG = s.match(reAG); if (mAG) return mAG[1] === 'Agree' ? 'Yes' : 'No';
+    // 3rd try: end-of-line answer: "…question? No"
+    const reEOL = new RegExp(e + '[^\\n]{0,120}?[ \\t](Yes|No)[ \\t]*(?=\\n|$)', 'im');
+    const mEOL = s.match(reEOL); if (mEOL) return mEOL[1];
+    return '';
+  }
+  function yn2(kws, src) { for (const k of kws) { const v = yesNo(k, src); if (v) return v; } return ''; }
+
+  function wage(pats, sec) {
+    const s = sec || t;
+    for (const p of pats) {
+      const m = s.match(p);
+      if (m && m[1]) {
+        const v = parseFloat(m[1].replace(/[$,\s]/g, '')) || 0;
+        if (v > 0) return v;
+      }
+    }
+    return 0;
   }
 
-  // Strip trailing phone/wage artifacts caught on same PDF line
+  // Strip trailing phone/wage artifacts captured on same PDF line
   function stripTrailing(v) {
     return v
       .replace(/\s*(?:Phone|Tel|Ph|Cell|Sup(?:ervisor)?)[.:\s].*$/i, '')
@@ -1743,107 +1773,146 @@ function parseRentalAppText(raw) {
       .trim();
   }
 
-  // Normalise date strings: "2026 - 06 - 01" → "2026-06-01", strip trailing junk
+  // Normalise date: "2026 - 06 - 01" → "2026-06-01", strip trailing junk
   function cleanDate(v) {
     return v.trim().replace(/\s*[-\/]\s*/g, '-').replace(/[^0-9\-\/]+$/g, '').trim();
   }
 
-  // ── Collect all phones and emails ─────────────────────────────────────────
+  // ── STEP 3: Section extraction ────────────────────────────────────────────
+  // This PDF uses numbered sections (1.) through (9.). Extracting each section
+  // prevents fields from one section bleeding into another.
+  const SEC = {};
+  const secPats = ['1\\.\\)', '2\\.\\)', '3\\.\\)', '4\\.\\)', '5\\.\\)',
+                   '6\\.\\)', '7\\.\\)', '8\\.\\)', '9\\.\\)'];
+  for (let i = 0; i < secPats.length; i++) {
+    const endStr = secPats.slice(i + 1).join('|') || 'ZZEND';
+    const re = new RegExp(secPats[i] + '[\\s\\S]*?(?=' + endStr + '|$)', 'i');
+    const m = t.match(re);
+    SEC[i + 1] = m ? m[0] : '';
+  }
+  // Header = everything before section 1 (property address, manager, move-in, occupants)
+  const headerSec = SEC[1] ? t.slice(0, Math.max(0, t.indexOf(SEC[1]))) + '\n' + (SEC[1].split('\n')[0] || '') : t;
+  // Acknowledgements = after section 9
+  const ackSec = SEC[9] ? t.slice(t.indexOf(SEC[9])) : t;
+
+  // ── STEP 4: Collect all phones and emails ─────────────────────────────────
   const allPhones = [];
   const phoneRe = /\b(\(?\d{3}\)?[\s.\-]\d{3}[\s.\-]\d{4}|\d{10})\b/g;
   let pm2; while ((pm2 = phoneRe.exec(t)) !== null) allPhones.push(pm2[1].trim());
-
   const allEmails = [];
   const emailRe = /\b([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,6})\b/g;
   let em; while ((em = emailRe.exec(t)) !== null) allEmails.push(em[1]);
 
-  // ── Contact ───────────────────────────────────────────────────────────────
-  // This PDF uses "E - mail address:" with spaces around the dash
-  const email1 = get([
+  // ── STEP 5: Pre-compute fields that need stripTrailing ────────────────────
+  const sec1 = SEC[1] || t;   // Personal info
+  const sec3 = SEC[3] || t;   // Previous tenancy
+  const sec4 = SEC[4] || t;   // Primary employment
+  const sec5 = SEC[5] || '';  // Co-applicant employment
+
+  // Emails: section 1 first, then section 2
+  const email1 = getIn(sec1, [
     /E\s*[-–]\s*mail\s+address\s*:\s*([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,6})/i,
     /[Ee]-?[Mm]ail\s*(?:address\s*)?:\s*([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,6})/i,
   ]) || allEmails[0] || '';
   const email2 = allEmails.find(e => e !== email1) || '';
 
-  // This PDF uses "Phone 1: XXXXXXXXXX Phone 2: XXXXXXXXXX"
-  const phone1 = get([
+  // Phones: "Phone 1:" / "Phone 2:" are the labels in this PDF
+  const phone1 = getIn(sec1, [
     /Phone\s*1\s*:\s*([0-9()\s.\-+]{7,20})/i,
     /Cell\s*(?:#|No\.?|Phone)?\s*:\s*([0-9()\s.\-+]{7,20})/i,
-    /(?:Cell|Mobile)\s*:\s*([0-9()\s.\-+]{7,20})/i,
     /Phone\s*(?:#|No\.?|1)?\s*:\s*([0-9()\s.\-+]{7,20})/i,
   ]) || allPhones[0] || '';
-  const phone2 = get([
+  const phone2 = getIn(sec1, [
     /Phone\s*2\s*:\s*([0-9()\s.\-+]{7,20})/i,
-    /Home\s*(?:#|No\.?|Phone)?\s*:\s*([0-9()\s.\-+]{7,20})/i,
     /Alt(?:ernate)?\s*(?:Phone|#)?\s*:\s*([0-9()\s.\-+]{7,20})/i,
-    /Work\s*(?:Phone|#)?\s*:\s*([0-9()\s.\-+]{7,20})/i,
-  ]) || (allPhones[1] && allPhones[1] !== phone1 ? allPhones[1] : '') || '';
+  ]) || (allPhones[1] && allPhones[1] !== phone1 ? allPhones[1] : '');
 
-  // ── Employment pre-computation (supervisor/length — need stripTrailing) ────
-  // Supervisor name: PDF uses "Supervisor ' s Name:" (spaces around apostrophe)
-  const empSupervisorRaw = get([
-    /Supervisor\s*['''`]?\s*s\s+Name\s*:\s*([^\n]{2,70})/i,
+  // Supervisor: very permissive — handles "Supervisor's Name", "Supervisor ' s Name", etc.
+  const empSupervisorRaw = getIn(sec4, [
+    /Supervisor.{0,6}Name\s*:\s*([^\n]{2,70})/i,
     /Name\s+of\s+Supervisor\s*:\s*([^\n]{2,70})/i,
     /Supervisor\s*:\s*([^\n]{2,70})/i,
   ]);
   const empSupervisor = stripTrailing(empSupervisorRaw);
 
-  // Supervisor phone: labeled just "Phone:" in the right column after supervisor
-  const empSupPhone = get([
-    /Supervisor\s*['''`]?\s*s\s*(?:Phone|Tel|Cell|#)\s*(?:No\.?)?\s*:\s*([0-9()\s.\-]{7,20})/i,
-    /(?:Phone|Tel)\s+(?:No\.?\s+)?of\s+Supervisor\s*:\s*([0-9()\s.\-]{7,20})/i,
-    // "Phone:" appearing within 900 chars after Supervisor (but not "Phone 1:" or "Phone 2:")
+  // Supervisor phone: may be on same line "Supervisor's Name: X Phone: Y" or separate
+  const empSupPhone = getIn(sec4, [
+    /Supervisor.{0,6}Name[^\n]*?(?:Phone|Tel)\s*:\s*([0-9()\s.\-]{7,20})/i,
+    /Supervisor.{0,6}(?:Phone|Tel|Cell|#)\s*:\s*([0-9()\s.\-]{7,20})/i,
     /Supervisor[\s\S]{3,900}?\n(?!Phone\s*[12]\s*:)Phone\s*:\s*([0-9]{7,15})/i,
   ]);
 
-  const empLengthRaw = get([
+  const empLengthRaw = getIn(sec4, [
     /Length\s+of\s+Employment\s*:\s*([^\n]{2,60})/i,
     /How\s+long\s+(?:at|employed|with)\s*:\s*([^\n]{2,60})/i,
-    /Duration\s+of\s+Employment\s*:\s*([^\n]{2,60})/i,
-    /Time\s+with\s+(?:this\s+)?(?:Employer|Company)\s*:\s*([^\n]{2,60})/i,
   ]);
   const empLength = stripTrailing(empLengthRaw);
 
-  // Previous stay — also needs stripTrailing to remove "Monthly" right-column artifact
-  const prevStayRaw = get([
+  const prevStayRaw = getIn(sec3, [
     /Length\s+of\s+Stay\s*:\s*([^\n]{2,40})/i,
     /(?:Length|Duration)\s+of\s+(?:Tenancy|Stay|Rental)\s*:\s*([^\n]{2,40})/i,
     /Period\s+of\s+(?:Tenancy|Rental)\s*:\s*([^\n]{2,40})/i,
-    /How\s+long\s+(?:at|have\s+you\s+(?:been|lived)|did\s+you\s+(?:live|stay))\s*:\s*([^\n]{2,40})/i,
-    /(?:Time|Years?|Months?)\s+at\s+(?:Previous\s+)?Address\s*:\s*([^\n]{2,40})/i,
   ]);
   const prevStay = stripTrailing(prevStayRaw);
 
-  const coEmpSupervisorRaw = get([
-    /Co.{0,25}Supervisor\s*['''`]?\s*s\s+Name\s*:\s*([^\n]{2,70})/i,
-    /Co.{0,25}Supervisor\s*:\s*([^\n]{2,70})/i,
+  // Co-applicant supervisor and length — from section 5 only
+  const coEmpSupervisorRaw = getIn(sec5, [
+    /Supervisor.{0,6}Name\s*:\s*([^\n]{2,70})/i,
+    /Supervisor\s*:\s*([^\n]{2,70})/i,
   ]);
   const coEmpSupervisor = stripTrailing(coEmpSupervisorRaw);
-
-  const coEmpLengthRaw = get([
-    /Co.{0,25}Length\s+of\s+Employment\s*:\s*([^\n]{2,60})/i,
-    /Co.{0,25}How\s+long\s+(?:at|employed)\s*:\s*([^\n]{2,60})/i,
+  const coEmpSupPhone   = getIn(sec5, [
+    /Supervisor.{0,6}Name[^\n]*?(?:Phone|Tel)\s*:\s*([0-9()\s.\-]{7,20})/i,
+    /Supervisor.{0,6}(?:Phone|Tel|Cell|#)\s*:\s*([0-9()\s.\-]{7,20})/i,
+    /Supervisor[\s\S]{3,600}?\n(?!Phone\s*[12]\s*:)Phone\s*:\s*([0-9]{7,15})/i,
+  ]);
+  const coEmpLengthRaw = getIn(sec5, [
+    /Length\s+of\s+Employment\s*:\s*([^\n]{2,60})/i,
+    /How\s+long\s+(?:at|employed)\s*:\s*([^\n]{2,60})/i,
   ]);
   const coEmpLength = stripTrailing(coEmpLengthRaw);
 
+  // ── STEP 6: Credit questions — positional from section 6 only ─────────────
+  // The 4 credit questions have answers "No"/"Yes" as standalone lines in sec 6.
+  // We remove "answered YES/NO" first so it doesn't count as an answer.
+  const sec6 = (SEC[6] || '').replace(/answered\s+(Yes|No)\b/gi, 'answered [■]');
+  const crArr = sec6.match(/\b(Yes|No)\b/gi) || [];
+  const crBankruptcy   = crArr[0] || '';
+  const crEviction     = crArr[1] || '';
+  const crLatePayments = crArr[2] || '';
+  const crRefused      = crArr[3] || '';
+
+  // ── STEP 7: References — section 8 table rows ─────────────────────────────
+  // This PDF uses: "Name: X Relationship: Y Phone: Z" on each row
+  const sec8 = SEC[8] || '';
+  const refLines = sec8
+    ? sec8.split('\n').filter(l =>
+        /Name\s*:/i.test(l) && !/not\s+residing/i.test(l) && l.trim().length > 5)
+    : [];
+  function rFld(line, pat) {
+    const m = line.match(pat);
+    return m ? m[1].trim().replace(/\s{2,}/g,' ') : '';
+  }
+  const r1 = refLines[0] || '', r2 = refLines[1] || '', r3 = refLines[2] || '';
+
   // ── Field extraction ─────────────────────────────────────────────────────
   return {
-    // ── Contact ───────────────────────────────────────────────────────────
+    // ── Contact (Section 1) ──────────────────────────────────────────────
     email: email1,
     phone1, phone2,
 
-    // DOB: "Date of Birth: 1982 - 11 - 02" — spaces in date, possible trailing junk
+    // DOB: "Date of Birth: 1982 - 11 - 02" — scoped to section 1
     dob: (() => {
-      const v = get([
+      const v = getIn(sec1, [
         /Date\s+of\s+Birth\s*:\s*([0-9][\d\s\-\/\.]{4,20})/i,
         /\bDOB\b[:\s]+([0-9][\d\s\-\/\.]{4,20})/i,
       ]);
       return v ? cleanDate(v) : '';
     })(),
 
-    sin: get([/\bS\.?I\.?N\.?\s*:\s*([0-9xX*]{3}[\s\-]?[0-9xX*]{3}[\s\-]?[0-9xX*]{3})/i]),
+    sin: getIn(sec1, [/\bS\.?I\.?N\.?\s*:\s*([0-9xX*]{3}[\s\-]?[0-9xX*]{3}[\s\-]?[0-9xX*]{3})/i]),
 
-    currentAddress: get([
+    currentAddress: getIn(sec1, [
       /Current\s+Address\s*:\s*([^\n]{5,120})/i,
       /Current\s+(?:Residential\s+)?Address\s*:\s*([^\n]{5,120})/i,
       /Present\s+Address\s*:\s*([^\n]{5,120})/i,
@@ -1851,7 +1920,7 @@ function parseRentalAppText(raw) {
       /Home\s+Address\s*:\s*([^\n]{5,120})/i,
     ]),
 
-    // ── Property & Occupancy ──────────────────────────────────────────────
+    // ── Property & Occupancy (pre-section header) ────────────────────────
     // This PDF: address value is on the line BEFORE "Address of property" label
     propertyAddress: get([
       /Address\s+of\s+(?:property|unit|rental)\s*:\s*([^\n]{5,120})/i,
@@ -1876,7 +1945,6 @@ function parseRentalAppText(raw) {
         /(?:Desired\s+)?(?:Move.?[Ii]n|Occupancy)\s+Date\s*:\s*([^\n]{2,30})/i,
         /(?:Possession|Entry|Tenancy\s+Start)\s+Date\s*:\s*([^\n]{2,30})/i,
         /Move.?[Ii]n\s*:\s*([^\n]{2,30})/i,
-        // Value on previous line
         /([0-9][\d\s\-\/\.]{4,14})\nDate\s+(?:occupancy\s+)?desired/i,
       ]);
       return v ? cleanDate(v) : '';
@@ -1902,23 +1970,22 @@ function parseRentalAppText(raw) {
       /How\s+many\s+children\s*:\s*([0-9]{1,2})/i,
     ]),
 
-    // ── Primary Employment ────────────────────────────────────────────────
+    // ── Primary Employment (Section 4) ───────────────────────────────────
     // "Status:  Full - time  Part - Time  Student  Unemployed\nFull Time"
-    empStatus: get([
+    empStatus: getIn(sec4, [
       /(?:Employment\s+)?Status\s*:[^\n]*\n\s*(Full\s*[-\s]*[Tt]ime|Part\s*[-\s]*[Tt]ime|Student|Unemployed|Retired|Self\s*[-\s]*[Ee]mployed)/i,
       /Employment\s+Status\s*:\s*([^\n]{2,40})/i,
       /Type\s+of\s+Employment\s*:\s*([^\n]{2,40})/i,
     ]) || (() => {
-      if (/\bFull\s*[-\s]*[Tt]ime\b/.test(t)) return 'Full-time';
-      if (/\bPart\s*[-\s]*[Tt]ime\b/.test(t)) return 'Part-time';
-      if (/\bSelf\s*[-\s]*[Ee]mployed\b/.test(t)) return 'Self-employed';
-      if (/\bUnemployed\b/i.test(t)) return 'Unemployed';
-      if (/\bRetired\b/i.test(t)) return 'Retired';
+      if (/\bFull\s*[-\s]*[Tt]ime\b/.test(sec4)) return 'Full-time';
+      if (/\bPart\s*[-\s]*[Tt]ime\b/.test(sec4)) return 'Part-time';
+      if (/\bSelf\s*[-\s]*[Ee]mployed\b/.test(sec4)) return 'Self-employed';
+      if (/\bUnemployed\b/i.test(sec4)) return 'Unemployed';
+      if (/\bRetired\b/i.test(sec4)) return 'Retired';
       return '';
     })(),
 
-    // "Current Employer: Mg collision"
-    empEmployer: get([
+    empEmployer: getIn(sec4, [
       /Current\s+Employer\s*:\s*([^\n]{2,70})/i,
       /(?:Name\s+of\s+)?Employer['']?s?\s+Name\s*:\s*([^\n]{2,70})/i,
       /Name\s+of\s+(?:Current\s+)?Employer\s*:\s*([^\n]{2,70})/i,
@@ -1926,16 +1993,14 @@ function parseRentalAppText(raw) {
       /Company\s+Name\s*:\s*([^\n]{2,70})/i,
     ]),
 
-    // "Current Employer: Mg collision\nAddress: 933B 48 Ave SE..."
-    empAddress: get([
+    empAddress: getIn(sec4, [
       /Current\s+Employer[^\n]+\nAddress\s*:\s*([^\n]{5,120})/i,
       /(?:Address\s+of\s+|Employer['']?s?\s+)?(?:Employer|Business|Work|Company)\s+Address\s*:\s*([^\n]{5,120})/i,
       /Work\s+Location\s*:\s*([^\n]{5,120})/i,
     ]),
 
-    // "Job Position: Body repair e"
     empPosition: (() => {
-      const v = get([
+      const v = getIn(sec4, [
         /Job\s+Position\s*:\s*([^\n]{2,60})/i,
         /Position\s*[\/\\]\s*Title\s*:\s*([^\n]{2,60})/i,
         /(?:Job\s+)?Title\s*:\s*([^\n]{2,60})/i,
@@ -1952,163 +2017,196 @@ function parseRentalAppText(raw) {
       /Monthly\s+(?:Income|Wage|Salary|Pay|Rate)\s*:\s*\$?\s*([\d,]+)/i,
       /(?:Income|Wage|Salary)\s*:\s*\$?\s*([\d,]+)/i,
       /\$\s*([\d,]{3,8})\s*\/?\s*(?:month|mo\.?|mth)/i,
-    ]),
+    ], sec4),
     empSupervisor,
     empSupPhone,
 
-    // "please list income, source and person:\n[value on next line]"
-    empOther: get([
+    empOther: getIn(sec4, [
       /Other\s+(?:Source\s+of\s+)?Income\s*:\s*([^\n]{2,120})/i,
       /Additional\s+Income\s*:\s*([^\n]{2,120})/i,
       /other\s+sources\s+of\s+income[^\n]*\n([^\n]{5,200})/i,
     ]),
 
-    // ── Co-Applicant ──────────────────────────────────────────────────────
-    coName: get([
-      /Co\s*[-–]?\s*Applicant['']?s?\s+(?:Full\s+)?(?:Legal\s+)?Name\s*:\s*([^\n]{2,60})/i,
-      /Joint\s+Applicant\s*:\s*([^\n]{2,60})/i,
-      /Second\s+Applicant\s*:\s*([^\n]{2,60})/i,
+    // ── Co-Applicant Personal (Section 2) ────────────────────────────────
+    // All fields scoped to SEC[2] so they never bleed from primary applicant section
+    coName: getIn(SEC[2], [
+      /Name\s*:\s*([^\n]{2,60})/i,
+      /Full\s+(?:Legal\s+)?Name\s*:\s*([^\n]{2,60})/i,
     ]),
     coDob: (() => {
-      const v = get([/Co[\s\S]{0,30}(?:Date\s+of\s+Birth|D\.?O\.?B\.?)\s*:\s*([0-9][\d\s\-\/\.]{4,20})/i]);
+      const v = getIn(SEC[2], [
+        /Date\s+of\s+Birth\s*:\s*([0-9][\d\s\-\/\.]{4,20})/i,
+        /\bDOB\b[:\s]+([0-9][\d\s\-\/\.]{4,20})/i,
+      ]);
       return v ? cleanDate(v) : '';
     })(),
-    coSIN: get([/Co[\s\S]{0,30}S\.?I\.?N\.?\s*:\s*([0-9xX*]{3}[\s\-]?[0-9xX*]{3}[\s\-]?[0-9xX*]{3})/i]),
-    coEmail: get([
-      /Co[\s\S]{0,60}E\s*[-–]\s*mail\s+address\s*:\s*([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,6})/i,
-      /Co[\s\S]{0,60}[Ee]-?[Mm]ail\s*:\s*([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,6})/i,
+    coSIN: getIn(SEC[2], [/\bS\.?I\.?N\.?\s*:\s*([0-9xX*]{3}[\s\-]?[0-9xX*]{3}[\s\-]?[0-9xX*]{3})/i]),
+    coEmail: getIn(SEC[2], [
+      /E\s*[-–]\s*mail\s+address\s*:\s*([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,6})/i,
+      /[Ee]-?[Mm]ail\s*(?:address\s*)?:\s*([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,6})/i,
     ]) || email2,
-    coPhone1: get([
-      /Co[\s\S]{0,60}Phone\s*1\s*:\s*([0-9()\s.\-]{7,20})/i,
-      /Co[\s\S]{0,60}(?:Cell|Mobile)\s*(?:Phone|#)?\s*:\s*([0-9()\s.\-]{7,20})/i,
+    coPhone1: getIn(SEC[2], [
+      /Phone\s*1\s*:\s*([0-9()\s.\-+]{7,20})/i,
+      /Cell\s*(?:#|No\.?|Phone)?\s*:\s*([0-9()\s.\-+]{7,20})/i,
+      /Phone\s*(?:#|No\.?|1)?\s*:\s*([0-9()\s.\-+]{7,20})/i,
     ]),
-    coPhone2: get([
-      /Co[\s\S]{0,60}Phone\s*2\s*:\s*([0-9()\s.\-]{7,20})/i,
-      /Co[\s\S]{0,60}(?:Home|Alt(?:ernate)?|Work)\s*(?:Phone|#)?\s*:\s*([0-9()\s.\-]{7,20})/i,
+    coPhone2: getIn(SEC[2], [
+      /Phone\s*2\s*:\s*([0-9()\s.\-+]{7,20})/i,
+      /Alt(?:ernate)?\s*(?:Phone|#)?\s*:\s*([0-9()\s.\-+]{7,20})/i,
     ]),
-    coCurrentAddress: get([
-      /Co[\s\S]{0,60}Current\s+Address\s*:\s*([^\n]{5,120})/i,
+    coCurrentAddress: getIn(SEC[2], [
+      /Current\s+Address\s*:\s*([^\n]{5,120})/i,
+      /Present\s+Address\s*:\s*([^\n]{5,120})/i,
     ]),
-    coEmpStatus: get([/Co[\s\S]{0,60}Employment\s+Status\s*:\s*([^\n]{2,40})/i]),
-    coEmpEmployer: get([
-      /Co[\s\S]{0,60}Current\s+Employer\s*:\s*([^\n]{2,70})/i,
-      /Co[\s\S]{0,60}Name\s+of\s+Employer\s*:\s*([^\n]{2,70})/i,
-      /Co[\s\S]{0,60}Employer['']?s?\s*:\s*([^\n]{2,70})/i,
-    ]),
-    coEmpAddress: get([
-      /Co[\s\S]{0,60}Current\s+Employer[^\n]+\nAddress\s*:\s*([^\n]{5,120})/i,
-      /Co[\s\S]{0,60}(?:Work|Business|Company)\s+Address\s*:\s*([^\n]{5,120})/i,
-    ]),
-    coEmpPosition: get([
-      /Co[\s\S]{0,60}Job\s+Position\s*:\s*([^\n]{2,60})/i,
-      /Co[\s\S]{0,60}(?:Job\s+)?(?:Title|Position|Occupation)\s*:\s*([^\n]{2,60})/i,
-    ]),
-    coEmpLength,
-    coEmpWage: wage([
-      /Co[\s\S]{0,60}Monthly\s+Wage\s*:\s*\$?\s*([\d,]+)/i,
-      /Co[\s\S]{0,60}(?:Monthly\s+)?Gross\s+(?:Income|Wage|Salary)\s*:\s*\$?\s*([\d,]+)/i,
-    ]),
-    coEmpSupervisor,
-    coEmpSupPhone: get([
-      /Co[\s\S]{0,60}Supervisor\s*['''`]?\s*s\s*(?:Phone|Tel|#)\s*:\s*([0-9()\s.\-]{7,20})/i,
-    ]),
-    coEmpOther: get([/Co[\s\S]{0,60}Other\s+(?:Source\s+of\s+)?Income\s*:\s*([^\n]{2,120})/i]),
 
-    // ── Previous Tenancy ──────────────────────────────────────────────────
-    prevAddress: get([
+    // ── Co-Applicant Employment (Section 5) ──────────────────────────────
+    // All fields scoped to sec5 (SEC[5] || '') — empty if no co-applicant employment
+    coEmpStatus: getIn(sec5, [
+      /(?:Employment\s+)?Status\s*:[^\n]*\n\s*(Full\s*[-\s]*[Tt]ime|Part\s*[-\s]*[Tt]ime|Student|Unemployed|Retired|Self\s*[-\s]*[Ee]mployed)/i,
+      /Employment\s+Status\s*:\s*([^\n]{2,40})/i,
+    ]) || (() => {
+      if (!sec5) return '';
+      if (/\bFull\s*[-\s]*[Tt]ime\b/.test(sec5)) return 'Full-time';
+      if (/\bPart\s*[-\s]*[Tt]ime\b/.test(sec5)) return 'Part-time';
+      if (/\bSelf\s*[-\s]*[Ee]mployed\b/.test(sec5)) return 'Self-employed';
+      if (/\bUnemployed\b/i.test(sec5)) return 'Unemployed';
+      if (/\bRetired\b/i.test(sec5)) return 'Retired';
+      return '';
+    })(),
+    coEmpEmployer: getIn(sec5, [
+      /Current\s+Employer\s*:\s*([^\n]{2,70})/i,
+      /(?:Name\s+of\s+)?Employer['']?s?\s+Name\s*:\s*([^\n]{2,70})/i,
+      /Name\s+of\s+(?:Current\s+)?Employer\s*:\s*([^\n]{2,70})/i,
+      /Employer['']?s?\s+(?:Name\s*)?:\s*([^\n]{2,70})/i,
+      /Company\s+Name\s*:\s*([^\n]{2,70})/i,
+    ]),
+    coEmpAddress: getIn(sec5, [
+      /Current\s+Employer[^\n]+\nAddress\s*:\s*([^\n]{5,120})/i,
+      /(?:Address\s+of\s+|Employer['']?s?\s+)?(?:Employer|Business|Work|Company)\s+Address\s*:\s*([^\n]{5,120})/i,
+      /Work\s+Location\s*:\s*([^\n]{5,120})/i,
+    ]),
+    coEmpPosition: (() => {
+      const v = getIn(sec5, [
+        /Job\s+Position\s*:\s*([^\n]{2,60})/i,
+        /Position\s*[\/\\]\s*Title\s*:\s*([^\n]{2,60})/i,
+        /(?:Job\s+)?Title\s*:\s*([^\n]{2,60})/i,
+        /Position\s*:\s*([^\n]{2,60})/i,
+        /Occupation\s*:\s*([^\n]{2,60})/i,
+      ]);
+      return v.replace(/\s*(?:Monthly|Wage|Salary|Employment|Employ|\$)[\s\S]*$/i, '').trim();
+    })(),
+    coEmpLength,
+    coEmpWage: sec5 ? wage([
+      /Monthly\s+Wage\s*:\s*\$?\s*([\d,]+)/i,
+      /(?:Monthly\s+)?Gross\s+(?:Income|Wage|Salary)\s*:\s*\$?\s*([\d,]+)/i,
+      /Monthly\s+(?:Income|Wage|Salary|Pay|Rate)\s*:\s*\$?\s*([\d,]+)/i,
+      /(?:Income|Wage|Salary)\s*:\s*\$?\s*([\d,]+)/i,
+      /\$\s*([\d,]{3,8})\s*\/?\s*(?:month|mo\.?|mth)/i,
+    ], sec5) : 0,
+    coEmpSupervisor,
+    coEmpSupPhone,
+    coEmpOther: getIn(sec5, [
+      /Other\s+(?:Source\s+of\s+)?Income\s*:\s*([^\n]{2,120})/i,
+      /Additional\s+Income\s*:\s*([^\n]{2,120})/i,
+    ]),
+
+    // ── Previous Tenancy (Section 3) ─────────────────────────────────────
+    prevAddress: getIn(sec3, [
       /Previous\s+Address\s*:\s*([^\n]{5,120})/i,
       /Previous\s+(?:Rental\s+)?Address\s*:\s*([^\n]{5,120})/i,
       /Former\s+(?:Rental\s+)?Address\s*:\s*([^\n]{5,120})/i,
       /Last\s+(?:Known\s+)?Address\s*:\s*([^\n]{5,120})/i,
     ]),
 
-    // "Landlord ' s Name: Tanveer Sidhu" — spaces around apostrophe
-    prevLandlordName: get([
+    // "Landlord ' s Name: Sony" — spaces around apostrophe
+    prevLandlordName: getIn(sec3, [
       /Landlord\s*['''`]?\s*s\s+Name\s*:\s*([^\n]{2,70})/i,
       /(?:Previous\s+|Former\s+)?Landlord\s+Name\s*:\s*([^\n]{2,70})/i,
       /Name\s+of\s+(?:Previous\s+|Former\s+)?Landlord\s*:\s*([^\n]{2,70})/i,
     ]),
 
-    // "Landlord ' s Phone: 4036327771"
-    prevLandlordPhone: get([
+    prevLandlordPhone: getIn(sec3, [
       /Landlord\s*['''`]?\s*s\s+Phone\s*:\s*([0-9()\s.\-]{7,20})/i,
       /Landlord[^\n]*(?:Phone|Tel)\s*:\s*([0-9()\s.\-]{7,20})/i,
     ]),
 
     prevStay,
 
-    // "Rent: 2400" — simple label (not Monthly Rent or Previous Rent)
-    prevRent: get([
+    prevRent: getIn(sec3, [
       /\bRent\s*:\s*\$?\s*([\d,]{2,8})/i,
       /(?:Previous|Current|Monthly)\s+Rent(?:al)?\s*:\s*\$?\s*([\d,]{2,8})/i,
       /Rent\s+(?:Paid|Amount)\s*:\s*\$?\s*([\d,]{2,8})/i,
     ]),
 
-    // "Reason For Leaving: Less space no garage"
-    prevReason: get([
+    prevReason: getIn(sec3, [
       /Reason\s+For\s+Leaving\s*:\s*([^\n]{2,150})/i,
       /Reason\s+for\s+(?:Leaving|Moving|Vacating)\s*:\s*([^\n]{2,150})/i,
       /Why\s+(?:are\s+you|did\s+you)\s+(?:leaving|moving)\s*:\s*([^\n]{2,150})/i,
       /Reason\s+for\s+Vacating\s*:\s*([^\n]{2,150})/i,
     ]),
 
-    // ── Credit / Background ───────────────────────────────────────────────
-    crBankruptcy:   yn2(['bankruptcy', 'declared bankruptcy', 'bankrupt']),
-    crEviction:     yn2(['evicted', 'been evicted', 'eviction', 'evict']),
-    crLatePayments: yn2(['late rental payments', 'late rent payments', 'late payments', 'overdue rent']),
-    crRefused:      yn2(['refused to pay', 'refusal to pay', 'refused rent', 'refuse to pay']),
-    crExplanation:  get([
+    // ── Credit / Background (Section 6 — positional) ─────────────────────
+    // Pre-computed positionally from SEC[6] to avoid "answered YES" false matches
+    crBankruptcy, crEviction, crLatePayments, crRefused,
+    crExplanation: getIn(SEC[6], [
       /(?:state\s+your\s+reasons|Explanation|Please\s+Explain|If\s+Yes[,\s]+explain)\s*:\s*([^\n]{2,300})/i,
     ]),
 
-    // ── Rental Profile ────────────────────────────────────────────────────
-    // "Do you wish to bring a pet[s] to the rental premises? No"
-    hasPets:  yn2(['wish to bring a pet', 'bring a pet', 'pets to the rental', 'any pets', 'have a pet']),
-    petDesc:  get([
-      /(?:If\s+yes[,\s]+)?describe\s+the\s+pets?\s*:\s*([^\n]{2,80})/i,
-      /(?:Type|Kind|Description|Breed)\s+of\s+Pet\s*:\s*([^\n]{2,80})/i,
-      /Pet\s+(?:Type|Description|Breed|Details?)\s*:\s*([^\n]{2,80})/i,
-    ]),
-    // "Do you, or any proposed occupant, smoke?"
-    smokes: yn2(['any proposed occupant, smoke', 'proposed occupant smoke', 'does anyone smoke', 'smoke in', 'smoking']),
-    // "you must carry tenant's insurance ... liability: No"  (after N o → No normalization)
-    hasInsurance:       yn2(['carry tenant', 'insure our belongings', 'tenant insurance', 'renters insurance', 'have insurance']),
-    // "do you consent to a joint credit report?"
-    jointCreditConsent: yn2(['consent to a joint', 'joint credit report', 'joint credit', 'credit report']),
+    // ── Rental Profile (Section 7) ────────────────────────────────────────
+    hasPets: yn2(['wish to bring a pet', 'bring a pet', 'pets to the rental', 'any pets', 'have a pet'], SEC[7] || t),
+    // petDesc: validate to reject co-applicant consent question text captured on same line
+    petDesc: (() => {
+      const v = getIn(SEC[7] || t, [
+        /(?:If\s+yes[,\s]+)?describe\s+the\s+pets?\s*:\s*([^\n]{2,80})/i,
+        /(?:Type|Kind|Description|Breed)\s+of\s+Pet\s*:\s*([^\n]{2,80})/i,
+        /Pet\s+(?:Type|Description|Breed|Details?)\s*:\s*([^\n]{2,80})/i,
+      ]);
+      if (!v || /^if\s+you\s+are/i.test(v) || /\bconsent\b/i.test(v) || v.endsWith('?')) return '';
+      return v;
+    })(),
+    smokes:       yn2(['any proposed occupant, smoke', 'proposed occupant smoke', 'does anyone smoke', 'smoke in', 'smoking'], SEC[7] || t),
+    hasInsurance: yn2(['carry tenant', 'insure our belongings', 'tenant insurance', 'renters insurance', 'have insurance'], SEC[7] || t),
+    // Joint credit consent spans whole doc (co-applicant may answer from diff page)
+    jointCreditConsent: yn2(['consent to a joint', 'joint credit report', 'joint credit', 'credit report'], t),
 
-    // ── Acknowledgements ──────────────────────────────────────────────────
-    // "written permission of the Landlord ... Yes"
-    ackNoPetsPermission:  yn2(['written permission of the Landlord', 'written permission', 'barbeques, waterbeds', 'barbeque waterbed']),
-    // "Pet Damage Deposit of $ ... Yes"
-    ackPetDeposit:        yn2(['pet damage deposit', 'additional pet', 'pet deposit']),
-    // "information contained herein is true and correct ... Agree"
-    ackInfoTrue:          yn2(['true and correct', 'information contained herein', 'no misrepresentations', 'information true']),
-    // "authorize the Landlord to obtain tenant history ... Agree"
-    ackAuthorizeObtain:   yn2(['authorize the Landlord to obtain', 'landlord to obtain', 'obtain tenant history', 'obtain information']),
-    // "authorize(s) the reporting agencies ... disclose relevant information ... Agree"
-    ackAuthorizeDisclose: yn2(['disclose relevant information', 'reporting agencies, and any other', 'authorize the reporting', 'reporting agencies']),
+    // ── Acknowledgements (ackSec = from Section 9 onward) ────────────────
+    // Scoped to ackSec so "no misrepresentations" in body text can't cause false No
+    ackNoPetsPermission:  yn2(['written permission of the Landlord', 'written permission', 'barbeques, waterbeds', 'barbeque waterbed'], ackSec),
+    ackPetDeposit:        yn2(['pet damage deposit', 'additional pet', 'pet deposit'], ackSec),
+    ackInfoTrue:          yn2(['true and correct', 'information contained herein', 'no misrepresentations', 'information true'], ackSec),
+    ackAuthorizeObtain:   yn2(['authorize the Landlord to obtain', 'landlord to obtain', 'obtain tenant history', 'obtain information'], ackSec),
+    ackAuthorizeDisclose: yn2(['disclose relevant information', 'reporting agencies, and any other', 'authorize the reporting', 'reporting agencies'], ackSec),
 
-    // ── References ────────────────────────────────────────────────────────
-    ref1Name:  get([/Reference\s*#?\s*1[\s,]*(?:Name\s*)?:\s*([^\n]{2,60})/i]),
-    ref1Phone: get([/Reference\s*#?\s*1[^\n]{0,40}(?:Phone|Tel|#)[^\n]{0,20}:\s*([0-9()\s.\-]{7,20})/i]),
-    ref1Rel:   get([/Reference\s*#?\s*1[^\n]{0,40}Rel(?:ationship)?\s*:\s*([^\n]{2,40})/i]),
-    ref2Name:  get([/Reference\s*#?\s*2[\s,]*(?:Name\s*)?:\s*([^\n]{2,60})/i]),
-    ref2Phone: get([/Reference\s*#?\s*2[^\n]{0,40}(?:Phone|Tel|#)[^\n]{0,20}:\s*([0-9()\s.\-]{7,20})/i]),
-    ref2Rel:   get([/Reference\s*#?\s*2[^\n]{0,40}Rel(?:ationship)?\s*:\s*([^\n]{2,40})/i]),
-    ref3Name:  get([/Reference\s*#?\s*3[\s,]*(?:Name\s*)?:\s*([^\n]{2,60})/i]),
-    ref3Phone: get([/Reference\s*#?\s*3[^\n]{0,40}(?:Phone|Tel|#)[^\n]{0,20}:\s*([0-9()\s.\-]{7,20})/i]),
-    ref3Rel:   get([/Reference\s*#?\s*3[^\n]{0,40}Rel(?:ationship)?\s*:\s*([^\n]{2,40})/i]),
+    // ── References (Section 8 — table rows) ──────────────────────────────
+    // This PDF uses "Name: X Relationship: Y Phone: Z" on a single row per reference
+    ref1Name:  rFld(r1, /Name\s*:\s*([^\n]{2,50}?)(?=\s*Relationship|\s*Phone|\s*$)/i),
+    ref1Rel:   rFld(r1, /Relationship\s*:\s*([^\n]{2,40}?)(?=\s*Phone|\s*$)/i),
+    ref1Phone: rFld(r1, /(?:Phone|Tel)\s*:\s*([0-9()\s.\-]{7,20})/i),
+    ref2Name:  rFld(r2, /Name\s*:\s*([^\n]{2,50}?)(?=\s*Relationship|\s*Phone|\s*$)/i),
+    ref2Rel:   rFld(r2, /Relationship\s*:\s*([^\n]{2,40}?)(?=\s*Phone|\s*$)/i),
+    ref2Phone: rFld(r2, /(?:Phone|Tel)\s*:\s*([0-9()\s.\-]{7,20})/i),
+    ref3Name:  rFld(r3, /Name\s*:\s*([^\n]{2,50}?)(?=\s*Relationship|\s*Phone|\s*$)/i),
+    ref3Rel:   rFld(r3, /Relationship\s*:\s*([^\n]{2,40}?)(?=\s*Phone|\s*$)/i),
+    ref3Phone: rFld(r3, /(?:Phone|Tel)\s*:\s*([0-9()\s.\-]{7,20})/i),
 
-    // ── Emergency Contact ─────────────────────────────────────────────────
-    emgName: get([
-      /Name\s+of\s+a\s+person\s+not\s+residing[^\n]*\n([^\n]{2,60})/i,
+    // ── Emergency Contact (Section 9) ─────────────────────────────────────
+    // "Name of a person not residing with you: Hamed Omar" — value on SAME line as label
+    emgName: getIn(SEC[9], [
+      /Name\s+of\s+a\s+person\s+not\s+residing[^\n]*?:\s*([^\n]{2,60})/i,
       /Emergency\s+(?:Contact\s+)?(?:Person\s+)?(?:Name\s*)?:\s*([^\n]{2,60})/i,
       /Next\s+of\s+Kin\s*(?:Name)?\s*:\s*([^\n]{2,60})/i,
     ]),
-    emgRel:     get([/Emergency[^\n]{0,60}Rel(?:ationship)?\s*:\s*([^\n]{2,40})/i,
-                     /Relationship\s+to\s+(?:Applicant|Tenant)\s*:\s*([^\n]{2,40})/i]),
-    emgPhone:   get([/Emergency[^\n]{0,60}(?:Phone|Tel|Cell|#)\s*(?:No\.?)?\s*:\s*([0-9()\s.\-]{7,20})/i]),
-    emgAddress: get([/Emergency[^\n]{0,60}Address\s*:\s*([^\n]{5,120})/i]),
+    emgRel: getIn(SEC[9], [
+      /Relationship\s*(?:to\s+(?:Applicant|Tenant))?\s*:\s*([^\n]{2,40})/i,
+    ]),
+    emgPhone: getIn(SEC[9], [
+      /Phone\s*(?:No\.?)?\s*:\s*([0-9()\s.\-]{7,20})/i,
+      /Tel\s*(?:No\.?)?\s*:\s*([0-9()\s.\-]{7,20})/i,
+      /Cell\s*(?:No\.?)?\s*:\s*([0-9()\s.\-]{7,20})/i,
+    ]),
+    emgAddress: getIn(SEC[9], [
+      /Address\s*:\s*([^\n]{5,120})/i,
+    ]),
   };
 }
 
