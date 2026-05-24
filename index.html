@@ -43,6 +43,20 @@ aside{width:300px;background:var(--card);border-right:1px solid var(--bdr);displ
 .ftabs{display:flex;gap:4px;flex-wrap:wrap}
 .ftab{padding:3px 9px;border-radius:10px;font-size:11px;cursor:pointer;border:1px solid var(--bdr);background:transparent;color:var(--mut);transition:.15s}
 .ftab.on{background:var(--pri);border-color:var(--pri);color:#fff}
+/* Search + Sort */
+.search-wrap{position:relative;margin-bottom:7px}
+.search-wrap input{width:100%;padding:5px 26px 5px 28px;border:1px solid var(--bdr);border-radius:6px;font-size:12px;color:var(--txt);background:var(--card);font-family:inherit}
+.search-wrap input:focus{outline:none;border-color:var(--acc);box-shadow:0 0 0 2px rgba(82,183,136,.15)}
+.search-icon{position:absolute;left:8px;top:50%;transform:translateY(-50%);font-size:11px;color:var(--mut);pointer-events:none;line-height:1}
+.search-clear{position:absolute;right:6px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:var(--mut);font-size:14px;line-height:1;padding:2px 3px}
+.search-clear:hover{color:var(--txt)}
+.sort-row{display:flex;gap:5px;align-items:center;margin-bottom:7px}
+.sort-sel{flex:1;padding:4px 6px;border:1px solid var(--bdr);border-radius:6px;font-size:11px;color:var(--txt);background:var(--card);font-family:inherit;min-width:0}
+.sort-sel:focus{outline:none;border-color:var(--acc)}
+.sort-dir-btn{padding:4px 8px;border:1px solid var(--bdr);border-radius:6px;background:var(--card);cursor:pointer;font-size:11px;color:var(--txt);white-space:nowrap;transition:.15s;flex-shrink:0;font-family:inherit}
+.sort-dir-btn:hover{border-color:var(--acc);color:var(--pri);background:var(--bg)}
+.sort-dir-btn.asc{border-color:var(--acc);color:var(--pri);background:#EAF7F0}
+.smatch{background:#FEF08A;border-radius:2px;padding:0 1px}
 .alist{flex:1;overflow-y:auto;padding:6px}
 .acard{padding:11px 13px;border-radius:8px;border:1.5px solid transparent;cursor:pointer;transition:.15s;margin-bottom:3px}
 .acard:hover{background:var(--bg);border-color:var(--bdr)}
@@ -227,6 +241,24 @@ textarea.notes:focus{outline:none;border-color:var(--acc)}
     <aside>
       <div class="sbhead">
         <h2>Applications</h2>
+        <!-- Search -->
+        <div class="search-wrap">
+          <span class="search-icon">🔍</span>
+          <input type="text" id="searchInput" placeholder="Search name, address, email…" oninput="doSearch()" autocomplete="off">
+          <button class="search-clear" id="searchClear" onclick="clearSearch()" style="display:none" title="Clear search">✕</button>
+        </div>
+        <!-- Sort -->
+        <div class="sort-row">
+          <select class="sort-sel" id="sortBy" onchange="updateSortDirBtn();renderList()">
+            <option value="date">Date submitted</option>
+            <option value="name">Applicant name</option>
+            <option value="address">Property address</option>
+            <option value="movein">Move-in date</option>
+            <option value="status">Status</option>
+          </select>
+          <button class="sort-dir-btn" id="sortDirBtn" onclick="toggleSortDir()" title="Toggle sort direction">↓ Newest</button>
+        </div>
+        <!-- PM filter (admin only) -->
         <div class="pm-filter-wrap" id="pmFilterWrap" style="display:none">
           <select id="pmFilter" onchange="renderList()">
             <option value="">All Property Managers</option>
@@ -962,34 +994,90 @@ let apps = [
 ];
 
 let filter = 'all', selId = null, step = 0, leaseApp = null, editMode = false;
+let searchQuery = '', sortDir = 'desc';
 
 // ── LIST ──────────────────────────────────────────────────────────────────────
 function getVisibleApps() {
   let list = apps;
-  // PM users only see their own applications (Syed/Mariam see each other's too)
+
+  // PM role — only own group's applications
   if (currentUser && currentUser.role === 'pm') {
     const myGroup = PM_NAMES[currentUser.email];
     list = list.filter(a => a.pmEmail === currentUser.email || (myGroup && PM_NAMES[a.pmEmail] === myGroup));
   }
-  // Admin PM filter dropdown — match by PM group name so Syed/Mariam both match
+  // Admin PM dropdown filter
   if (currentUser && currentUser.role === 'admin') {
-    const pmSel = document.getElementById('pmFilter').value;
+    const pmSel = document.getElementById('pmFilter')?.value;
     if (pmSel) {
       const groupName = PM_NAMES[pmSel];
       list = list.filter(a => a.pmEmail === pmSel || (groupName && PM_NAMES[a.pmEmail] === groupName));
     }
   }
-  // Status filter
+  // Status tab filter
   if (filter !== 'all') list = list.filter(a => a.status === filter);
+
+  // ── Search ────────────────────────────────────────────────────────────────
+  if (searchQuery) {
+    const q = searchQuery; // already toLowerCase'd by doSearch()
+    list = list.filter(a => [
+      a.name, a.email, a.phone1, a.phone2,
+      a.propertyAddress, a.currentAddress,
+      a.empEmployer, a.empPosition, a.empAddress,
+      PM_NAMES[a.pmEmail] || a.propertyManager,
+      a.status, a.notes, a.submittedAt, a.desiredOccupancy,
+      a.coName, a.coEmail, a.coPhone1,
+      a.prevAddress, a.prevLandlordName,
+      a.sin, a.dob,
+    ].join(' ').toLowerCase().includes(q));
+  }
+
+  // ── Sort ──────────────────────────────────────────────────────────────────
+  const sortBy = document.getElementById('sortBy')?.value || 'date';
+  const dir = sortDir === 'asc' ? 1 : -1;
+  const STATUS_ORDER = { new: 0, reviewed: 1, approved: 2, declined: 3 };
+
+  list = [...list].sort((a, b) => {
+    let va, vb;
+    switch (sortBy) {
+      case 'name':
+        va = (a.name || '').toLowerCase();
+        vb = (b.name || '').toLowerCase();
+        break;
+      case 'address':
+        va = (a.propertyAddress || '').toLowerCase();
+        vb = (b.propertyAddress || '').toLowerCase();
+        break;
+      case 'movein':
+        va = a.desiredOccupancy || '9999';
+        vb = b.desiredOccupancy || '9999';
+        break;
+      case 'status':
+        va = STATUS_ORDER[a.status] ?? 9;
+        vb = STATUS_ORDER[b.status] ?? 9;
+        break;
+      case 'date':
+      default:
+        va = a.submittedAt || '';
+        vb = b.submittedAt || '';
+    }
+    if (va < vb) return -dir;
+    if (va > vb) return  dir;
+    return 0;
+  });
+
   return list;
 }
 
 function renderList() {
-  const shown   = getVisibleApps();
+  updateSortDirBtn();
+  const shown = getVisibleApps();
 
-  // Base list respecting PM role/filter but ignoring status filter — for per-tab counts
+  // Base list (PM-filtered but ignoring status tab) — for per-tab counts
   let base = apps;
-  if (currentUser?.role === 'pm') base = base.filter(a => a.pmEmail === currentUser.email);
+  if (currentUser?.role === 'pm') {
+    const myGroup = PM_NAMES[currentUser.email];
+    base = base.filter(a => a.pmEmail === currentUser.email || (myGroup && PM_NAMES[a.pmEmail] === myGroup));
+  }
   if (currentUser?.role === 'admin') {
     const pmSel = document.getElementById('pmFilter')?.value;
     if (pmSel) {
@@ -997,13 +1085,15 @@ function renderList() {
       base = base.filter(a => a.pmEmail === pmSel || (groupName && PM_NAMES[a.pmEmail] === groupName));
     }
   }
-  const total    = base.length;
-  const counts   = { new:0, reviewed:0, approved:0, declined:0 };
+  const total  = base.length;
+  const counts = { new:0, reviewed:0, approved:0, declined:0 };
   base.forEach(a => { if (counts[a.status] !== undefined) counts[a.status]++; });
 
-  // Header count — show filtered vs total
+  // Header count
   const hEl = document.getElementById('hcount');
-  if (filter === 'all') {
+  if (searchQuery) {
+    hEl.innerHTML = `<strong>${shown.length}</strong> result${shown.length !== 1 ? 's' : ''} &nbsp;<span style="font-size:11px;color:var(--mut)">for "${searchQuery}" (${total} total)</span>`;
+  } else if (filter === 'all') {
     hEl.innerHTML = `<strong>${total}</strong> application${total !== 1 ? 's' : ''} &nbsp;
       <span style="font-size:11px;color:var(--mut)">
         ${counts.new ? `${counts.new} new &middot; ` : ''}
@@ -1016,7 +1106,7 @@ function renderList() {
     hEl.innerHTML = `<strong>${shown.length}</strong> ${label.toLowerCase()} &nbsp;<span style="font-size:11px;color:var(--mut)">(${total} total)</span>`;
   }
 
-  // Update tab labels with live counts
+  // Update tab labels
   document.querySelectorAll('.ftab').forEach(t => {
     const fn = t.getAttribute('onclick') || '';
     const m  = fn.match(/setFilter\('(\w+)'\)/);
@@ -1027,18 +1117,28 @@ function renderList() {
     t.textContent = `${s.charAt(0).toUpperCase() + s.slice(1)}${n ? ` (${n})` : ''}`;
   });
 
+  // Search highlight helper — escapes HTML then wraps match in a yellow span
+  function hl(text) {
+    const safe = String(text || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    if (!searchQuery) return safe;
+    const re = new RegExp(searchQuery.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'), 'gi');
+    return safe.replace(re, m => `<mark class="smatch">${m}</mark>`);
+  }
+
   document.getElementById('alist').innerHTML = shown.map(a => {
     const pmLabel = PM_NAMES[a.pmEmail] || a.propertyManager || '';
-    const pmTag = pmLabel ? `<span class="pm-tag ${pmClass(a.pmEmail)}">${pmLabel}</span>` : '';
+    const pmTag   = pmLabel ? `<span class="pm-tag ${pmClass(a.pmEmail)}">${pmLabel}</span>` : '';
     return `<div class="acard ${String(selId) === String(a.id) ? 'sel' : ''}" onclick='selApp(${JSON.stringify(a.id)})'>
       <div class="acard-top">
-        <span class="acard-name">${a.name}</span>
+        <span class="acard-name">${hl(a.name)}</span>
         <span class="badge b-${a.status}">${a.status}</span>
       </div>
-      <div class="acard-sub">${pmTag}<span>${a.propertyAddress}</span></div>
-      <div class="acard-sub"><span>Move-in: ${a.desiredOccupancy || '—'}</span><span>Submitted ${a.submittedAt}</span></div>
+      <div class="acard-sub">${pmTag}<span>${hl(a.propertyAddress)}</span></div>
+      <div class="acard-sub"><span>Move-in: ${hl(a.desiredOccupancy || '—')}</span><span>Submitted ${a.submittedAt}</span></div>
     </div>`;
-  }).join('') || '<div style="padding:20px;text-align:center;font-size:13px;color:var(--mut)">No applications match this filter.</div>';
+  }).join('') || `<div style="padding:20px;text-align:center;font-size:13px;color:var(--mut)">
+    ${searchQuery ? `No results for "<strong>${searchQuery}</strong>"` : 'No applications match this filter.'}
+  </div>`;
 }
 
 function setFilter(f) {
@@ -1047,6 +1147,46 @@ function setFilter(f) {
     t.classList.toggle('on', t.getAttribute('onclick') === `setFilter('${f}')`);
   });
   renderList();
+}
+
+// ── SEARCH ────────────────────────────────────────────────────────────────────
+function doSearch() {
+  const inp = document.getElementById('searchInput');
+  searchQuery = (inp?.value || '').trim().toLowerCase();
+  const clr = document.getElementById('searchClear');
+  if (clr) clr.style.display = searchQuery ? 'block' : 'none';
+  renderList();
+}
+
+function clearSearch() {
+  const inp = document.getElementById('searchInput');
+  if (inp) inp.value = '';
+  searchQuery = '';
+  const clr = document.getElementById('searchClear');
+  if (clr) clr.style.display = 'none';
+  renderList();
+  inp?.focus();
+}
+
+// ── SORT ──────────────────────────────────────────────────────────────────────
+function toggleSortDir() {
+  sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+  updateSortDirBtn();
+  renderList();
+}
+
+function updateSortDirBtn() {
+  const btn = document.getElementById('sortDirBtn');
+  if (!btn) return;
+  const field = document.getElementById('sortBy')?.value || 'date';
+  const isDate = field === 'date' || field === 'movein';
+  if (sortDir === 'asc') {
+    btn.textContent = isDate ? '↑ Oldest' : '↑ A → Z';
+    btn.classList.add('asc');
+  } else {
+    btn.textContent = isDate ? '↓ Newest' : '↓ Z → A';
+    btn.classList.remove('asc');
+  }
 }
 
 // ── DETAIL VIEW ───────────────────────────────────────────────────────────────
