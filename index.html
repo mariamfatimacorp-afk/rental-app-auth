@@ -539,7 +539,7 @@ const LEASE_TEMPLATE_PATH = 'Rental Applications/Lease_Template.docx';
 const IS_DEMO    = false;
 const SP_READY   = true;
 // Bump this string whenever parseRentalAppText() changes so old cached data auto-reruns
-const PARSE_VERSION = '8';
+const PARSE_VERSION = '9';
 const SP_USE_LIST = SP_LIST !== 'YOUR_APPLICATIONS_LIST_ID';
 
 // User roles — email must match Microsoft account username (lowercase)
@@ -1649,11 +1649,12 @@ async function extractPdfData(app) {
       }
     }
 
-    // Pass 2: extract raw text from every page using row-based (Y-position) grouping.
-    // Items on the same horizontal row are grouped together and sorted left-to-right,
-    // so "Supervisor's Name: John  Phone: 555-1234" lands on ONE line — making all
-    // regex patterns reliable without needing multi-line workarounds.
-    // Y tolerance of 3 units handles minor baseline shifts in the same row.
+    // Pass 2: extract raw text using row-based (Y-position) grouping with column-gap
+    // detection. Items at the same Y are sorted left-to-right. When consecutive items
+    // have a horizontal gap > 35 PDF pts (a column boundary), a newline is inserted so
+    // each logical field lands on its own line. This prevents blank fields from capturing
+    // the adjacent column's label, and stops "Name: Value  Phone: 123" from bleeding the
+    // phone into the name capture.
     let rawText = '';
     for (let p = 1; p <= pdf.numPages; p++) {
       const page    = await pdf.getPage(p);
@@ -1664,13 +1665,26 @@ async function extractPdfData(app) {
         if (!item.str.trim()) continue;
         const y = Math.round(item.transform[5] / 3) * 3; // 3-unit Y tolerance
         if (!rowMap[y]) rowMap[y] = [];
-        rowMap[y].push({ x: item.transform[4], str: item.str });
+        rowMap[y].push({ x: item.transform[4], str: item.str, w: item.width || 0 });
       }
-      // Sort rows top-to-bottom (PDF Y is bottom-up, so higher Y = higher on page)
+      // Sort rows top-to-bottom (PDF Y is bottom-up → higher Y = higher on page)
       const sortedYs = Object.keys(rowMap).map(Number).sort((a, b) => b - a);
       for (const y of sortedYs) {
         rowMap[y].sort((a, b) => a.x - b.x); // left-to-right within each row
-        const txt = rowMap[y].map(i => i.str).join(' ').trim();
+        let rowText = '';
+        let prevEndX = null;
+        for (const item of rowMap[y]) {
+          if (prevEndX !== null) {
+            const gap = item.x - prevEndX;
+            // Gap > 35 pts = column boundary → split to new line
+            // Gap ≤ 35 pts = normal word spacing → single space
+            rowText += gap > 35 ? '\n' : ' ';
+          }
+          rowText += item.str;
+          // estimate end-X: use PDF-reported width when available, else ~5 pts/char
+          prevEndX = item.x + (item.w > 0 ? item.w : item.str.length * 5);
+        }
+        const txt = rowText.trim();
         if (txt) rawText += txt + '\n';
       }
     }
@@ -2156,6 +2170,7 @@ function parseRentalAppText(raw) {
       /Landlord\s*['''`]?\s*s\s+Name\s*:\s*([^\n]{2,70})/i,
       /(?:Previous\s+|Former\s+)?Landlord\s+Name\s*:\s*([^\n]{2,70})/i,
       /Name\s+of\s+(?:Previous\s+|Former\s+)?Landlord\s*:\s*([^\n]{2,70})/i,
+      /Landlord\s*:\s*([A-Za-z][^\n]{1,60})/i,  // broad fallback: "Landlord: Value"
     ]),
 
     prevLandlordPhone: getIn(sec3, [
