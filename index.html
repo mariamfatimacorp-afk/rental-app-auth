@@ -539,7 +539,7 @@ const LEASE_TEMPLATE_PATH = 'Rental Applications/Lease_Template.docx';
 const IS_DEMO    = false;
 const SP_READY   = true;
 // Bump this string whenever parseRentalAppText() changes so old cached data auto-reruns
-const PARSE_VERSION = '11';
+const PARSE_VERSION = '12';
 const SP_USE_LIST = SP_LIST !== 'YOUR_APPLICATIONS_LIST_ID';
 
 // User roles — email must match Microsoft account username (lowercase)
@@ -1922,9 +1922,10 @@ function parseRentalAppText(raw) {
   // Two-column PDF extraction may put Name / Relationship / Phone on SEPARATE extracted
   // lines. Extract each field type independently with matchAll, then align by index.
   const sec8 = SEC[8] || '';
+  // sec8names: colon is optional — some PDFs print "Name Maryam Ali" (no colon)
   const sec8names = sec8
-    ? [...sec8.matchAll(/Name\s*:\s*([^\n:]{2,60}?)(?=\s*Relationship\b|\s*Phone\b|\s*Name\b|\n|$)/gi)]
-        .map(m => m[1].trim()).filter(v => v.length >= 2 && !/not\s+residing/i.test(v))
+    ? [...sec8.matchAll(/\bName\s*:?\s*([A-Za-z][^\n:]{1,59}?)(?=\s*Relationship\b|\s*Phone\b|\s*Name\b|\n|$)/gi)]
+        .map(m => m[1].trim()).filter(v => v.length >= 2 && !/not\s+residing/i.test(v) && !/^of\s+a\b/i.test(v))
     : [];
   const sec8rels = sec8
     ? [...sec8.matchAll(/Relationship\s*:\s*([^\n:]{2,40}?)(?=\s*Phone\b|\s*Name\b|\n|$)/gi)]
@@ -1978,14 +1979,17 @@ function parseRentalAppText(raw) {
       /Assigned\s+(?:Property\s+)?Manager\s*:\s*([^\n]{2,60})/i,
     ]),
 
-    // Desired occupancy: value may be on line BEFORE "Date occupancy desired:"
+    // Desired occupancy: value may be on same line, next line, or previous line
+    // (midpoint extraction puts value-in-right-col on a separate line from label)
     desiredOccupancy: (() => {
       const v = get([
-        /Date\s+(?:occupancy\s+)?desired\s*:\s*([^\n]{2,30})/i,
+        /Date\s+(?:occupancy\s+)?desired\s*:\s*([^\n]{2,30})/i,           // value same line
         /(?:Desired\s+)?(?:Move.?[Ii]n|Occupancy)\s+Date\s*:\s*([^\n]{2,30})/i,
         /(?:Possession|Entry|Tenancy\s+Start)\s+Date\s*:\s*([^\n]{2,30})/i,
         /Move.?[Ii]n\s*:\s*([^\n]{2,30})/i,
-        /([0-9][\d\s\-\/\.]{4,14})\nDate\s+(?:occupancy\s+)?desired/i,
+        /([0-9][\d\s\-\/\.]{3,13}[0-9])\s*\nDate\s+(?:occupancy\s+)?desired/i, // value BEFORE label
+        /Date\s+(?:occupancy\s+)?desired\s*:\s*\n\s*([0-9][\d\s\-\/\.]{3,13}[0-9])/i, // value AFTER label
+        /(?:Move.?[Ii]n|Occupancy)\s+Date\s*:\s*\n\s*([0-9][\d\s\-\/\.]{3,13}[0-9])/i,
       ]);
       return v ? cleanDate(v) : '';
     })(),
