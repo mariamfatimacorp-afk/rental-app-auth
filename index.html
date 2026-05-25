@@ -541,7 +541,7 @@ const LEASE_TEMPLATE_PATH = 'Rental Applications/Lease Template.docx';
 const IS_DEMO    = false;
 const SP_READY   = true;
 // Bump this string whenever parseRentalAppText() changes so old cached data auto-reruns
-const PARSE_VERSION = '14';
+const PARSE_VERSION = '15';
 
 // ── PHONE FORMATTING ──────────────────────────────────────────────────────────
 // Normalises any phone string to "000-000-0000". Returns original if not 10-digit.
@@ -2059,7 +2059,7 @@ function parseRentalAppText(raw) {
         /(?:Desired\s+)?(?:Move.?[Ii]n|Occupancy)\s+Date\s*:\s*([^\n]{2,30})/i,
         /(?:Possession|Entry|Tenancy\s+Start)\s+Date\s*:\s*([^\n]{2,30})/i,
         /Move.?[Ii]n\s*:\s*([^\n]{2,30})/i,
-        /([0-9][\d\s\-\/\.]{3,13}[0-9])\s*\nDate\s+(?:occupancy\s+)?desired/i, // value BEFORE label
+        /([0-9][\d\s\-\/\.]{3,13}[0-9])[ \t]*(?:\n[ \t]*)+Date\s+(?:occupancy\s+)?desired/i, // value BEFORE label (allows blank lines)
         /Date\s+(?:occupancy\s+)?desired\s*:\s*\n\s*([0-9][\d\s\-\/\.]{3,13}[0-9])/i, // value AFTER label
         /(?:Move.?[Ii]n|Occupancy)\s+Date\s*:\s*\n\s*([0-9][\d\s\-\/\.]{3,13}[0-9])/i,
       ]);
@@ -2260,23 +2260,29 @@ function parseRentalAppText(raw) {
       /Last\s+(?:Known\s+)?Address\s*:\s*([^\n]{5,120})/i,
     ]),
 
-    // "Landlord ' s Name: Sony" — spaces around apostrophe; value may be on same or next line
+    // "Landlord ' s Name: …" — any apostrophe variant + single-line PDF support
+    // [^:\n]*? between "Landlord" and "Name" matches "' s", "'s", "s", etc. without
+    // depending on the exact apostrophe character (avoids U+0027 vs U+2019 ambiguity).
+    // Non-greedy capture with lookahead stops before the NEXT field label on one-line PDFs.
     prevLandlordName: (() => {
-      const v = getIn(sec3, [
-        /Landlord\s*['''`'']?\s*s\s+Name\s*:\s*([^\n]{2,70})/i,
+      const raw = getIn(sec3, [
+        // PRIMARY: non-greedy, stops before next field label (handles single-line PDFs)
+        /Landlord[^:\n]*?Name\s*:\s*([^\n]{2,70}?)(?=\s*(?:Landlord|Phone|Previous|Address)\b|$)/i,
+        // FALLBACK: greedy (multi-line PDFs where value is isolated on its own line)
+        /Landlord[^:\n]*?Name\s*:\s*([^\n]{2,70})/i,
         /(?:Previous\s+|Former\s+)?Landlord\s+Name\s*:\s*([^\n]{2,70})/i,
         /Name\s+of\s+(?:Previous\s+|Former\s+)?Landlord\s*:\s*([^\n]{2,70})/i,
-        // value on next line (two-column PDF layout)
-        /Landlord\s*['''`'']?\s*s\s+Name\s*:\s*\n\s*([^\n]{2,70})/i,
-        /(?:Previous\s+|Former\s+)?Landlord\s+Name\s*:\s*\n\s*([^\n]{2,70})/i,
-        /Name\s+of\s+(?:Previous\s+|Former\s+)?Landlord\s*:\s*\n\s*([^\n]{2,70})/i,
-        /Landlord\s*:\s*([A-Za-z][^\n]{1,60})/i,  // broad fallback: "Landlord: Value"
+        // value on next line
+        /Landlord[^:\n]*?Name\s*:\s*\n\s*([^\n]{2,70})/i,
+        /Landlord\s*:\s*([A-Za-z][^\n]{1,60})/i,
       ]);
-      return v && !looksLikeLabel(v) ? v.trim() : '';
+      if (!raw) return '';
+      const v = stripTrailing(raw).trim();  // removes trailing "Phone: …" artifacts
+      return v && !looksLikeLabel(v) ? v : '';
     })(),
 
     prevLandlordPhone: getIn(sec3, [
-      /Landlord\s*['''`]?\s*s\s+Phone\s*:\s*([0-9()\s.\-]{7,20})/i,
+      /Landlord[^:\n]*?Phone\s*:\s*([0-9()\s.\-]{7,20})/i,
       /Landlord[^\n]*(?:Phone|Tel)\s*:\s*([0-9()\s.\-]{7,20})/i,
     ]),
 
