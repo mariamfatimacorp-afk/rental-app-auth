@@ -539,7 +539,7 @@ const LEASE_TEMPLATE_PATH = 'Rental Applications/Lease_Template.docx';
 const IS_DEMO    = false;
 const SP_READY   = true;
 // Bump this string whenever parseRentalAppText() changes so old cached data auto-reruns
-const PARSE_VERSION = '6';
+const PARSE_VERSION = '7';
 const SP_USE_LIST = SP_LIST !== 'YOUR_APPLICATIONS_LIST_ID';
 
 // User roles — email must match Microsoft account username (lowercase)
@@ -780,6 +780,8 @@ function fileToDraftApp(f) {
     propertyAddress, propertyManager: '',
     pdfParsed: false, parseVersion: '', pdfAnnFields: '',
     desiredOccupancy: '', maxOccupants: '', adults: '', children: '', monthlyRent: 0,
+    landlordName: '', landlordAddress: '', landlordEmail: '', landlordPhone: '',
+    utilityClause: '', pmNotes: '',
     sin: '', email: '', phone1: '', phone2: '', dob: '', currentAddress: '',
     coName: '', coSIN: '', coEmail: '', coPhone1: '', coPhone2: '', coCurrentAddress: '', coDob: '',
     prevLandlordName: '', prevLandlordPhone: '', prevAddress: '', prevStay: '', prevRent: '', prevReason: '',
@@ -1350,6 +1352,32 @@ function selApp(id) {
       <span style="font-size:11px;color:var(--mut)">Auto-assigned from PDF · override anytime</span>
     </div>
 
+    <!-- ── PM / Admin: Landlord & Lease Details ── -->
+    ${(isAdmin || isPM) ? `
+    <div class="scard" style="margin-bottom:12px;border-left:3px solid #6366F1">
+      <h3 style="display:flex;align-items:center;gap:8px">
+        <span class="icon">🔑</span> Landlord &amp; Lease Details
+        <span style="font-size:10px;font-weight:500;color:#6366F1;background:#EEF2FF;padding:2px 8px;border-radius:10px;margin-left:4px">PM / Admin only</span>
+      </h3>
+      <div class="secgrid" style="margin-bottom:10px">
+        <div>
+          ${frow('Landlord Name', a.landlordName, '', 'landlordName')}
+          ${frow('Landlord Address', a.landlordAddress, '', 'landlordAddress')}
+          ${frow('Landlord Email', a.landlordEmail, '', 'landlordEmail')}
+          ${frow('Landlord Phone', a.landlordPhone, '', 'landlordPhone')}
+        </div>
+        <div>
+          ${(isAdmin || isPM) ? (editMode
+            ? `<div class="frow"><span class="flbl">Monthly Rent ($)</span><input class="ef-input" id="ef_monthlyRent" type="number" min="0" step="50" value="${Number(a.monthlyRent)||''}" placeholder="e.g. 2500"></div>`
+            : `<div class="frow"><span class="flbl">Monthly Rent</span><span class="fval" style="font-weight:700;color:var(--grn);font-size:15px">${rentAmt ? '$ ' + rentAmt.toLocaleString() : '<span style=\'color:var(--mut);font-weight:400;font-size:13px\'>— set in Edit</span>'}</span></div>`
+          ) : ''}
+          ${farea('Utility Clause', a.utilityClause, 'utilityClause')}
+        </div>
+      </div>
+      ${farea('PM Notes', a.pmNotes, 'pmNotes')}
+      ${!editMode ? `<button class="btn btn-ylw" style="margin-top:8px;font-size:11px" onclick='toggleEdit(${sid})'>✏️ Edit these fields</button>` : ''}
+    </div>` : ''}
+
     <!-- ── Row 1: Property Details + Rental Profile ── -->
     <div class="secgrid" style="margin-bottom:12px">
       <div class="scard">
@@ -1360,10 +1388,6 @@ function selApp(id) {
         ${frow('Max Occupants', a.maxOccupants, '', 'maxOccupants')}
         ${frow('Adults', a.adults, '', 'adults')}
         ${frow('Children / Dependants', a.children, '', 'children')}
-        ${(isAdmin || isPM) ? (editMode
-          ? `<div class="frow"><span class="flbl">Monthly Rent ($)</span><input class="ef-input" id="ef_monthlyRent" type="number" min="0" step="50" value="${Number(a.monthlyRent)||''}" placeholder="e.g. 2500"></div>`
-          : `<div class="frow"><span class="flbl">Monthly Rent</span><span class="fval" style="font-weight:600;color:var(--grn)">${rentAmt ? '$' + rentAmt.toLocaleString() : '<span style=\'color:var(--mut);font-weight:400\'>— set in Edit</span>'}</span></div>`
-        ) : ''}
       </div>
       <div class="scard">
         <h3><span class="icon">📋</span> Rental Profile</h3>
@@ -1745,13 +1769,17 @@ function parseRentalAppText(raw) {
   function yesNo(keyword, src) {
     const e = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const s = src ? src.replace(/answered\s+(Yes|No)\b/gi, 'answered [■]') : tClean;
-    // 1st try: standalone Yes/No on its own line (prevents matching words in sentences)
+    // 1st try: standalone Yes/No on its own line
     const reSA = new RegExp(e + '[\\s\\S]{0,700}?\\n[ \\t]*(Yes|No)[ \\t]*(?=\\n|$)', 'im');
     const mSA = s.match(reSA); if (mSA) return mSA[1];
     // 2nd try: standalone Agree/Disagree on its own line
     const reAG = new RegExp(e + '[\\s\\S]{0,700}?\\n[ \\t]*(Agree|Disagree)[ \\t]*(?=\\n|$)', 'im');
     const mAG = s.match(reAG); if (mAG) return mAG[1] === 'Agree' ? 'Yes' : 'No';
-    // 3rd try: end-of-line answer: "…question? No"
+    // 3rd try: Agree/Disagree inline at end of line — catches PDFs where answer follows text on same line
+    // Must run BEFORE Yes/No EOL to prevent "contain no misrepresentations" false-matching "No"
+    const reAGEOL = new RegExp(e + '[^\\n]{0,300}?[ \\t](Agree|Disagree)[ \\t]*(?=\\n|$)', 'im');
+    const mAGEOL = s.match(reAGEOL); if (mAGEOL) return mAGEOL[1] === 'Agree' ? 'Yes' : 'No';
+    // 4th try: Yes/No at end of line: "…question? No"
     const reEOL = new RegExp(e + '[^\\n]{0,120}?[ \\t](Yes|No)[ \\t]*(?=\\n|$)', 'im');
     const mEOL = s.match(reEOL); if (mEOL) return mEOL[1];
     return '';
@@ -1832,18 +1860,19 @@ function parseRentalAppText(raw) {
     /Alt(?:ernate)?\s*(?:Phone|#)?\s*:\s*([0-9()\s.\-+]{7,20})/i,
   ]) || (allPhones[1] && allPhones[1] !== phone1 ? allPhones[1] : '');
 
-  // Supervisor: very permissive — handles "Supervisor's Name", "Supervisor ' s Name", etc.
+  // Supervisor: very permissive — handles "Supervisor's Name", "Supervisor ' s Name",
+  // and PDFs that split "Supervisor ' s" / "Name:" across two extracted lines.
   const empSupervisorRaw = getIn(sec4, [
-    /Supervisor.{0,6}Name\s*:\s*([^\n]{2,70})/i,
+    /Supervisor[\s\S]{0,6}Name\s*:\s*([^\n]{2,70})/i,
     /Name\s+of\s+Supervisor\s*:\s*([^\n]{2,70})/i,
     /Supervisor\s*:\s*([^\n]{2,70})/i,
   ]);
   const empSupervisor = stripTrailing(empSupervisorRaw);
 
-  // Supervisor phone: may be on same line "Supervisor's Name: X Phone: Y" or separate
+  // Supervisor phone: same-line OR separate column (two-column PDFs put Phone in right col)
   const empSupPhone = getIn(sec4, [
-    /Supervisor.{0,6}Name[^\n]*?(?:Phone|Tel)\s*:\s*([0-9()\s.\-]{7,20})/i,
-    /Supervisor.{0,6}(?:Phone|Tel|Cell|#)\s*:\s*([0-9()\s.\-]{7,20})/i,
+    /Supervisor[\s\S]{0,6}Name[^\n]*?(?:Phone|Tel)\s*:\s*([0-9()\s.\-]{7,20})/i,
+    /Supervisor[\s\S]{0,6}(?:Phone|Tel|Cell|#)\s*:\s*([0-9()\s.\-]{7,20})/i,
     /Supervisor[\s\S]{3,900}?\n(?!Phone\s*[12]\s*:)Phone\s*:\s*([0-9]{7,15})/i,
   ]);
 
@@ -1862,13 +1891,13 @@ function parseRentalAppText(raw) {
 
   // Co-applicant supervisor and length — from section 5 only
   const coEmpSupervisorRaw = getIn(sec5, [
-    /Supervisor.{0,6}Name\s*:\s*([^\n]{2,70})/i,
+    /Supervisor[\s\S]{0,6}Name\s*:\s*([^\n]{2,70})/i,
     /Supervisor\s*:\s*([^\n]{2,70})/i,
   ]);
   const coEmpSupervisor = stripTrailing(coEmpSupervisorRaw);
   const coEmpSupPhone   = getIn(sec5, [
-    /Supervisor.{0,6}Name[^\n]*?(?:Phone|Tel)\s*:\s*([0-9()\s.\-]{7,20})/i,
-    /Supervisor.{0,6}(?:Phone|Tel|Cell|#)\s*:\s*([0-9()\s.\-]{7,20})/i,
+    /Supervisor[\s\S]{0,6}Name[^\n]*?(?:Phone|Tel)\s*:\s*([0-9()\s.\-]{7,20})/i,
+    /Supervisor[\s\S]{0,6}(?:Phone|Tel|Cell|#)\s*:\s*([0-9()\s.\-]{7,20})/i,
     /Supervisor[\s\S]{3,600}?\n(?!Phone\s*[12]\s*:)Phone\s*:\s*([0-9]{7,15})/i,
   ]);
   const coEmpLengthRaw = getIn(sec5, [
@@ -1887,18 +1916,22 @@ function parseRentalAppText(raw) {
   const crLatePayments = crArr[2] || '';
   const crRefused      = crArr[3] || '';
 
-  // ── STEP 7: References — section 8 table rows ─────────────────────────────
-  // This PDF uses: "Name: X Relationship: Y Phone: Z" on each row
+  // ── STEP 7: References — section 8, per-field matchAll ───────────────────────
+  // Two-column PDF extraction may put Name / Relationship / Phone on SEPARATE extracted
+  // lines. Extract each field type independently with matchAll, then align by index.
   const sec8 = SEC[8] || '';
-  const refLines = sec8
-    ? sec8.split('\n').filter(l =>
-        /Name\s*:/i.test(l) && !/not\s+residing/i.test(l) && l.trim().length > 5)
+  const sec8names = sec8
+    ? [...sec8.matchAll(/Name\s*:\s*([^\n:]{2,60}?)(?=\s*Relationship\b|\s*Phone\b|\s*Name\b|\n|$)/gi)]
+        .map(m => m[1].trim()).filter(v => v.length >= 2 && !/not\s+residing/i.test(v))
     : [];
-  function rFld(line, pat) {
-    const m = line.match(pat);
-    return m ? m[1].trim().replace(/\s{2,}/g,' ') : '';
-  }
-  const r1 = refLines[0] || '', r2 = refLines[1] || '', r3 = refLines[2] || '';
+  const sec8rels = sec8
+    ? [...sec8.matchAll(/Relationship\s*:\s*([^\n:]{2,40}?)(?=\s*Phone\b|\s*Name\b|\n|$)/gi)]
+        .map(m => m[1].trim()).filter(v => v.length >= 2)
+    : [];
+  const sec8phones = sec8
+    ? [...sec8.matchAll(/(?:Phone|Tel)\s*:\s*([0-9()\s.\-]{7,20})/gi)]
+        .map(m => m[1].trim())
+    : [];
 
   // ── Field extraction ─────────────────────────────────────────────────────
   return {
@@ -2170,7 +2203,13 @@ function parseRentalAppText(raw) {
       return v;
     })(),
     smokes:       yn2(['any proposed occupant, smoke', 'proposed occupant smoke', 'does anyone smoke', 'smoke in', 'smoking'], SEC[7] || t),
-    hasInsurance: yn2(['carry tenant', 'insure our belongings', 'tenant insurance', 'renters insurance', 'have insurance'], SEC[7] || t),
+    // hasInsurance: try direct same-line capture first (answer often follows "liability:" inline)
+    hasInsurance: (() => {
+      const s7 = SEC[7] || t;
+      const mD = s7.match(/(?:insure\s+our\s+belongings|for\s+third\s+party\s+liability)\s*:?\s*(Yes|No)\b/i);
+      if (mD) return mD[1];
+      return yn2(['insure our belongings', 'carry tenant', 'tenant insurance', 'renters insurance', 'have insurance'], s7);
+    })(),
     // Joint credit consent spans whole doc (co-applicant may answer from diff page)
     jointCreditConsent: yn2(['consent to a joint', 'joint credit report', 'joint credit', 'credit report'], t),
 
@@ -2182,17 +2221,17 @@ function parseRentalAppText(raw) {
     ackAuthorizeObtain:   yn2(['authorize the Landlord to obtain', 'landlord to obtain', 'obtain tenant history', 'obtain information'], ackSec),
     ackAuthorizeDisclose: yn2(['disclose relevant information', 'reporting agencies, and any other', 'authorize the reporting', 'reporting agencies'], ackSec),
 
-    // ── References (Section 8 — table rows) ──────────────────────────────
-    // This PDF uses "Name: X Relationship: Y Phone: Z" on a single row per reference
-    ref1Name:  rFld(r1, /Name\s*:\s*([^\n]{2,50}?)(?=\s*Relationship|\s*Phone|\s*$)/i),
-    ref1Rel:   rFld(r1, /Relationship\s*:\s*([^\n]{2,40}?)(?=\s*Phone|\s*$)/i),
-    ref1Phone: rFld(r1, /(?:Phone|Tel)\s*:\s*([0-9()\s.\-]{7,20})/i),
-    ref2Name:  rFld(r2, /Name\s*:\s*([^\n]{2,50}?)(?=\s*Relationship|\s*Phone|\s*$)/i),
-    ref2Rel:   rFld(r2, /Relationship\s*:\s*([^\n]{2,40}?)(?=\s*Phone|\s*$)/i),
-    ref2Phone: rFld(r2, /(?:Phone|Tel)\s*:\s*([0-9()\s.\-]{7,20})/i),
-    ref3Name:  rFld(r3, /Name\s*:\s*([^\n]{2,50}?)(?=\s*Relationship|\s*Phone|\s*$)/i),
-    ref3Rel:   rFld(r3, /Relationship\s*:\s*([^\n]{2,40}?)(?=\s*Phone|\s*$)/i),
-    ref3Phone: rFld(r3, /(?:Phone|Tel)\s*:\s*([0-9()\s.\-]{7,20})/i),
+    // ── References (Section 8 — per-field matchAll) ───────────────────────
+    // Extracted by field type independently to handle two-column PDF layouts
+    ref1Name:  sec8names[0]  || '',
+    ref1Rel:   sec8rels[0]   || '',
+    ref1Phone: sec8phones[0] || '',
+    ref2Name:  sec8names[1]  || '',
+    ref2Rel:   sec8rels[1]   || '',
+    ref2Phone: sec8phones[1] || '',
+    ref3Name:  sec8names[2]  || '',
+    ref3Rel:   sec8rels[2]   || '',
+    ref3Phone: sec8phones[2] || '',
 
     // ── Emergency Contact (Section 9) ─────────────────────────────────────
     // "Name of a person not residing with you: Hamed Omar" — value on SAME line as label
@@ -2286,7 +2325,7 @@ function saveEdit(id) {
     const key = el.id.replace('ef_', '');
     let val = el.value;
     // Numeric fields — strip currency symbols and commas
-    if (key === 'empWage' || key === 'coEmpWage' || key === 'monthlyRent') {
+    if (['empWage','coEmpWage','monthlyRent'].includes(key)) {
       val = parseFloat(String(val).replace(/[$,\s]/g,'')) || 0;
     }
     updates[key] = val;
