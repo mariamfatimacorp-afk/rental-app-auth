@@ -234,6 +234,7 @@ textarea.notes:focus{outline:none;border-color:var(--acc)}
         <span class="huser-email" id="userEmail"></span>
         <span class="huser-role" id="userRole"></span>
       </div>
+      <button class="btn-signout" onclick="doSwitchAccount()" style="background:rgba(255,255,255,.10);margin-right:4px" title="Sign in with a different Microsoft account">⇄ Switch Account</button>
       <button class="btn-signout" onclick="doLogout()">Sign Out</button>
     </div>
   </header>
@@ -501,6 +502,7 @@ textarea.notes:focus{outline:none;border-color:var(--acc)}
             <div class="fg"><label>Landlord Name/Company</label><input id="f_land" type="text" value="Lasi P. Management"></div>
             <div class="fg full"><label>Landlord Address</label><input id="f_laddr" type="text" value="156 Coral Springs Landing NE, Calgary, Alberta"></div>
             <div class="fg full"><label>Landlord Email</label><input id="f_lemail" type="text" value="umairlasi@gmail.com"></div>
+            <div class="fg full"><label>Landlord Phone</label><input id="f_lphone" type="text" placeholder="403-000-0000"></div>
           </div>
         </div>
       </div>
@@ -531,15 +533,38 @@ const SP_FOLDER = 'Rental Applications/Rental Applications PDFs';
 // Optional: set this to a SharePoint list GUID once you add a structured list to Power Automate
 const SP_LIST   = 'YOUR_APPLICATIONS_LIST_ID';
 
-// Path to the Word lease template inside Documents library (create this file in SharePoint)
-// Template must use {{placeholder}} tags — see buildLeaseTemplateData() for all available tags
-const LEASE_TEMPLATE_PATH = 'Rental Applications/Lease_Template.docx';
+// Path to the Word lease template inside Documents library.
+// Upload "Lease Template.docx" to SharePoint → Documents/Rental Applications/Lease Template.docx
+const LEASE_TEMPLATE_PATH = 'Rental Applications/Lease Template.docx';
 // ─────────────────────────────────────────────────────────────────────────────
 
 const IS_DEMO    = false;
 const SP_READY   = true;
 // Bump this string whenever parseRentalAppText() changes so old cached data auto-reruns
 const PARSE_VERSION = '12';
+
+// ── PHONE FORMATTING ──────────────────────────────────────────────────────────
+// Normalises any phone string to "000-000-0000". Returns original if not 10-digit.
+function formatPhone(raw) {
+  if (!raw) return '';
+  const digits = String(raw).replace(/\D/g, '');
+  if (digits.length === 10) return `${digits.slice(0,3)}-${digits.slice(3,6)}-${digits.slice(6)}`;
+  if (digits.length === 11 && digits[0] === '1') return `${digits.slice(1,4)}-${digits.slice(4,7)}-${digits.slice(7)}`;
+  return String(raw).trim();
+}
+// All app fields that contain phone numbers (used for display formatting + save normalisation)
+const PHONE_KEYS = new Set([
+  'phone1','phone2','coPhone1','coPhone2',
+  'empSupPhone','coEmpSupPhone',
+  'prevLandlordPhone',
+  'ref1Phone','ref2Phone','ref3Phone',
+  'emgPhone','landlordPhone'
+]);
+// Fields that a PM (non-admin) is allowed to edit in the PM section
+const PM_EDIT_KEYS = new Set([
+  'landlordName','landlordAddress','landlordEmail','landlordPhone',
+  'monthlyRent','utilityClause','pmNotes'
+]);
 const SP_USE_LIST = SP_LIST !== 'YOUR_APPLICATIONS_LIST_ID';
 
 // User roles — email must match Microsoft account username (lowercase)
@@ -677,6 +702,31 @@ function doLogout() {
   document.getElementById('userEmail').textContent = '';
   document.getElementById('userRole').textContent = '';
   document.getElementById('demoUser').value = '';
+}
+
+// Sign in with a different Microsoft account (forces account-picker UI).
+// Clears local state then triggers a fresh redirect with prompt=select_account.
+function doSwitchAccount() {
+  currentUser = null;
+  apps = [];
+  document.getElementById('appWrap').style.display = 'none';
+  document.getElementById('loginScreen').style.display = 'flex';
+  document.getElementById('loginError').style.display = 'none';
+  document.getElementById('userName').textContent = '';
+  document.getElementById('userEmail').textContent = '';
+  document.getElementById('userRole').textContent = '';
+  if (!IS_DEMO && msalApp) {
+    try {
+      // Remove all cached accounts so MSAL doesn't auto-sign in the old user
+      msalApp.getAllAccounts().forEach(acc => msalApp.clearCache());
+    } catch(e) { console.warn('clearCache:', e); }
+    try {
+      // Redirect to Microsoft with account-picker forced
+      msalApp.loginRedirect({ scopes: SCOPES, prompt: 'select_account' });
+    } catch(e) {
+      console.warn('Switch account redirect:', e);
+    }
+  }
 }
 
 async function getToken() {
@@ -1223,24 +1273,29 @@ function selApp(id) {
   const sid = JSON.stringify(a.id);
 
   // ── Helper: one field row; key enables editable input in edit mode ──────────
+  // Admins can edit any field; PMs can only edit PM_EDIT_KEYS fields.
   function frow(lbl, val, cls='', key='') {
     const v = val !== undefined && val !== null && val !== '' ? String(val) : '';
-    if (editMode && key) {
+    // Format phone values for display
+    const dispV = (key && PHONE_KEYS.has(key)) ? (formatPhone(v) || v) : v;
+    const canEdit = editMode && key && (isAdmin || (isPM && PM_EDIT_KEYS.has(key)));
+    if (canEdit) {
       return `<div class="frow"><span class="flbl">${lbl}</span><input class="ef-input" id="ef_${key}" value="${v.replace(/"/g,'&quot;')}"></div>`;
     }
-    return `<div class="frow"><span class="flbl">${lbl}</span><span class="fval ${cls}">${v || '<span style="color:var(--mut);font-weight:400">—</span>'}</span></div>`;
+    return `<div class="frow"><span class="flbl">${lbl}</span><span class="fval ${cls}">${dispV || '<span style="color:var(--mut);font-weight:400">—</span>'}</span></div>`;
   }
 
   // ── Helper: multi-line textarea for long text fields ─────────────────────
   function farea(lbl, val, key='') {
     const v = val !== undefined && val !== null && val !== '' ? String(val) : '';
-    if (editMode && key) {
+    const canEdit = editMode && key && (isAdmin || (isPM && PM_EDIT_KEYS.has(key)));
+    if (canEdit) {
       return `<div class="frow"><span class="flbl">${lbl}</span><textarea class="ef-input" id="ef_${key}" rows="2" style="resize:vertical">${v.replace(/</g,'&lt;')}</textarea></div>`;
     }
     return `<div class="frow"><span class="flbl">${lbl}</span><span class="fval">${v || '<span style="color:var(--mut);font-weight:400">—</span>'}</span></div>`;
   }
 
-  // ── Helper: Yes/No credit row; select in edit mode ───────────────────────
+  // ── Helper: Yes/No credit row; select in edit mode (admin only) ──────────
   function yn(val) {
     if (!val) return '<span style="color:var(--mut)">—</span>';
     if (val === 'No')  return '<span class="tag tag-no">No</span>';
@@ -1253,7 +1308,7 @@ function selApp(id) {
     return '<span class="tag tag-bad">No</span>';
   }
   function crRow(label, val, key='') {
-    if (editMode && key) {
+    if (editMode && key && isAdmin) {
       return `<div class="credit-row"><span>${label}</span>
         <select class="ef-sel" id="ef_${key}">
           <option value="">—</option>
@@ -1264,7 +1319,7 @@ function selApp(id) {
     return `<div class="credit-row"><span>${label}</span>${yn(val)}</div>`;
   }
   function crRowGood(label, val, key='') {
-    if (editMode && key) {
+    if (editMode && key && isAdmin) {
       return `<div class="credit-row"><span>${label}</span>
         <select class="ef-sel" id="ef_${key}">
           <option value="">—</option>
@@ -1282,16 +1337,17 @@ function selApp(id) {
       ${canClick ? `onclick='setStatus(${sid},"${status}")'` : 'disabled'}>${on?'●':'○'} ${label}</button>`;
   }
 
-  // Reference row — editable in edit mode
+  // Reference row — editable in edit mode (admin only)
   function refRow(n, name, rel, phone) {
-    if (editMode) {
+    const dispPhone = formatPhone(phone) || phone || '';
+    if (editMode && isAdmin) {
       return `
         <div class="frow"><span class="flbl">Reference ${n} — Name</span><input class="ef-input" id="ef_ref${n}Name" value="${(name||'').replace(/"/g,'&quot;')}"></div>
         <div class="frow"><span class="flbl">Reference ${n} — Relationship</span><input class="ef-input" id="ef_ref${n}Rel" value="${(rel||'').replace(/"/g,'&quot;')}"></div>
         <div class="frow"><span class="flbl">Reference ${n} — Phone</span><input class="ef-input" id="ef_ref${n}Phone" value="${(phone||'').replace(/"/g,'&quot;')}"></div>`;
     }
     if (!name) return `<div class="frow"><span class="flbl">Reference ${n}</span><span class="fval" style="color:var(--mut);font-weight:400">—</span></div>`;
-    return `<div class="frow"><span class="flbl">Reference ${n}</span><span class="fval">${name}${rel?' · '+rel:''}${phone?' · '+phone:''}</span></div>`;
+    return `<div class="frow"><span class="flbl">Reference ${n}</span><span class="fval">${name}${rel?' · '+rel:''}${dispPhone?' · '+dispPhone:''}</span></div>`;
   }
 
   d.innerHTML = `
@@ -1306,7 +1362,7 @@ function selApp(id) {
     <!-- ── Edit mode bar ── -->
     ${editMode ? `
     <div class="edit-bar">
-      <div class="edit-bar-txt">✏️ Edit Mode — all fields are now editable. Click Save when done.</div>
+      <div class="edit-bar-txt">✏️ Edit Mode — ${isAdmin ? 'all fields are now editable' : 'Landlord &amp; Lease detail fields are editable'}. Click Save when done.</div>
       <div class="edit-bar-btns">
         <button class="btn btn-grn" onclick='saveEdit(${sid})'>💾 Save Changes</button>
         <button class="btn btn-out" onclick='cancelEdit(${sid})'>✕ Cancel</button>
@@ -1323,8 +1379,8 @@ function selApp(id) {
         </div>
       </div>
       <div class="dacts" style="flex-wrap:wrap;gap:6px">
-        ${!editMode ? `<button class="btn btn-ylw" onclick='toggleEdit(${sid})'>✏️ Edit</button>` : ''}
-        ${!editMode ? `<button class="btn btn-out" style="font-size:11px" onclick='rescanPdf(${sid})'>↻ Rescan PDF</button>` : ''}
+        ${!editMode && isAdmin ? `<button class="btn btn-ylw" onclick='toggleEdit(${sid})'>✏️ Edit</button>` : ''}
+        ${!editMode && isAdmin ? `<button class="btn btn-out" style="font-size:11px" onclick='rescanPdf(${sid})'>↻ Rescan PDF</button>` : ''}
         ${a.pdfUrl ? `<a href="${a.pdfUrl}" target="_blank" rel="noopener noreferrer" class="btn btn-pri">&#128196; View PDF</a>` : ''}
       </div>
     </div>
@@ -1375,7 +1431,7 @@ function selApp(id) {
         </div>
       </div>
       ${farea('PM Notes', a.pmNotes, 'pmNotes')}
-      ${!editMode ? `<button class="btn btn-ylw" style="margin-top:8px;font-size:11px" onclick='toggleEdit(${sid})'>✏️ Edit these fields</button>` : ''}
+      ${!editMode ? `<button class="btn btn-ylw" style="margin-top:8px;font-size:11px" onclick='toggleEdit(${sid})'>✏️ Edit ${isAdmin ? 'these fields' : 'Landlord / Lease details'}</button>` : ''}
     </div>` : ''}
 
     <!-- ── Row 1: Property Details + Rental Profile ── -->
@@ -1539,7 +1595,8 @@ function selApp(id) {
       </details>` : ''}
     </div>
 
-    <!-- ── Generate Lease bar ── -->
+    <!-- ── Generate Lease bar (Admin only) ── -->
+    ${isAdmin ? `
     <div class="abar">
       <div class="abar-txt">
         <strong>${a.status==='approved'?'✓ Ready to Generate Lease':'Generate Lease Agreement'}</strong>
@@ -1550,7 +1607,13 @@ function selApp(id) {
       <div class="abar-btns">
         <button class="btn btn-acc btn-lg" onclick='openModal(${sid})'>Generate Lease &rarr;</button>
       </div>
-    </div>`;
+    </div>` : `
+    <div class="abar" style="background:#F9FAFB;border-color:var(--bdr)">
+      <div class="abar-txt">
+        <strong style="color:var(--mut)">Lease Generation</strong>
+        <span style="color:var(--mut)">Only administrators can generate lease agreements.</span>
+      </div>
+    </div>`}`;
 
   // Kick off async PDF extraction if not yet done OR if parsing code was updated
   if ((!a.pdfParsed || a.parseVersion !== PARSE_VERSION) && SP_READY) {
@@ -2351,6 +2414,11 @@ function saveEdit(id) {
     if (['empWage','coEmpWage','monthlyRent'].includes(key)) {
       val = parseFloat(String(val).replace(/[$,\s]/g,'')) || 0;
     }
+    // Phone fields — normalise to 000-000-0000 format on save
+    if (PHONE_KEYS.has(key)) {
+      const formatted = formatPhone(val);
+      if (formatted) val = formatted;
+    }
     updates[key] = val;
   });
   Object.assign(a, updates);
@@ -2405,6 +2473,13 @@ function openModal(id) {
   document.getElementById('f_t2').value = leaseApp.coName || '';
   document.getElementById('f_t3').value = '';
   document.getElementById('f_occ').value = leaseApp.maxOccupants;
+  // Pre-fill landlord / rent from PM section if set
+  if (leaseApp.landlordName)    document.getElementById('f_land').value   = leaseApp.landlordName;
+  if (leaseApp.landlordAddress) document.getElementById('f_laddr').value  = leaseApp.landlordAddress;
+  if (leaseApp.landlordEmail)   document.getElementById('f_lemail').value = leaseApp.landlordEmail;
+  if (leaseApp.landlordPhone)   document.getElementById('f_lphone').value = formatPhone(leaseApp.landlordPhone) || leaseApp.landlordPhone;
+  if (leaseApp.monthlyRent)     document.getElementById('f_rent').value   = leaseApp.monthlyRent;
+  if (leaseApp.utilityClause)   { document.getElementById('f_util_custom').value = leaseApp.utilityClause; document.querySelector('input[name="f_utils"][value="other"]').checked = true; toggleUtilCustom(); }
   const oc = leaseApp.desiredOccupancy;
   if (oc) {
     const od = new Date(oc + 'T12:00:00');
@@ -2505,6 +2580,7 @@ function getLeaseData() {
   const land   = document.getElementById('f_land').value.trim();
   const laddr  = document.getElementById('f_laddr').value.trim();
   const lemail = document.getElementById('f_lemail').value.trim();
+  const lphone = formatPhone(document.getElementById('f_lphone').value.trim()) || document.getElementById('f_lphone').value.trim();
   // Wizard fields
   const utils       = document.querySelector('input[name="f_utils"]:checked')?.value || 'split';
   const utilCustom  = document.getElementById('f_util_custom').value.trim();
@@ -2521,25 +2597,25 @@ function getLeaseData() {
   const garbage     = document.getElementById('f_garbage').value;
   if (!addr || !agdate || !start || !end || !rent || !t1) { toast('Please fill in all required fields'); return null; }
   return { addr, utype, appliances, agdate, start, end, rent, dep, late, rerent,
-    tenants: [t1, t2, t3].filter(Boolean), occ, land, laddr, lemail, app: leaseApp,
+    tenants: [t1, t2, t3].filter(Boolean), occ, land, laddr, lemail, lphone, app: leaseApp,
     utils, utilCustom, accParking, accBackyard, accGarage, accLaundry, accStorage, entrance,
     pets, petDesc, snow, yardMaint, garbage };
 }
 
-// ── DOCX GENERATION (template-based via docxtemplater) ───────────────────────
+// ── DOCX GENERATION (template-based via content control fill) ────────────────
 async function doGenDOCX() {
   let d;
   try { d = getLeaseData(); } catch(e) { toast('⚠ Form error: ' + e.message); return; }
   if (!d) return;
 
-  // Prefer SharePoint template if docxtemplater is loaded
-  if (typeof PizZip !== 'undefined' && typeof Docxtemplater !== 'undefined') {
+  // Prefer template-based generation (requires only PizZip)
+  if (typeof PizZip !== 'undefined') {
     try {
       await generateLeaseFromTemplate(d);
       return;
     } catch(e) {
-      console.warn('Template generation failed, falling back to HTML export:', e);
-      toast('⚠ Template not found — using built-in format instead');
+      console.warn('Template generation failed, falling back to HTML export:', e.message);
+      toast('⚠ Template error: ' + e.message + ' — using built-in format instead');
     }
   }
 
@@ -2565,39 +2641,194 @@ async function doGenDOCX() {
   }
 }
 
+// ── TEMPLATE-BASED LEASE GENERATION (Word content controls) ──────────────────
+// Fetches Lease Template.docx from SharePoint, replaces the 21 Word content
+// controls with application data in document order, then downloads the filled DOCX.
 async function generateLeaseFromTemplate(d) {
-  toast('Fetching lease template from SharePoint…');
+  toast('Loading lease template from SharePoint…');
   const token = await getToken();
   const encodedPath = LEASE_TEMPLATE_PATH.split('/').map(encodeURIComponent).join('/');
   const res = await fetch(
     `https://graph.microsoft.com/v1.0/sites/${SP_SITE}/drive/root:/${encodedPath}:/content`,
     { headers: { Authorization: `Bearer ${token}` } }
   );
-  if (!res.ok) throw new Error(`Template fetch failed: HTTP ${res.status}. Upload Lease_Template.docx to SharePoint → ${LEASE_TEMPLATE_PATH}`);
+  if (!res.ok) throw new Error(
+    `Template fetch failed: HTTP ${res.status}.\n` +
+    `Upload "Lease Template.docx" to SharePoint → Documents/${LEASE_TEMPLATE_PATH}`
+  );
 
   const arrayBuf = await res.arrayBuffer();
+  if (typeof PizZip === 'undefined') throw new Error('PizZip library not loaded yet — try again in a moment.');
+
   const zip = new PizZip(arrayBuf);
-  const doc = new Docxtemplater(zip, {
-    paragraphLoop: true,
-    linebreaks: true,
-    nullGetter: () => ''
+  let docXml = zip.file('word/document.xml').asText();
+
+  // Build ordered replacement list and fill content controls
+  const replacements = buildTemplateReplacements(d);
+  docXml = fillDocxContentControls(docXml, replacements);
+
+  zip.file('word/document.xml', docXml);
+
+  const content = zip.generate({
+    type: 'arraybuffer',
+    mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
   });
 
-  doc.render(buildLeaseTemplateData(d));
-
-  const blob = doc.getZip().generate({
-    type: 'blob',
-    mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+  const blob = new Blob([content], {
+    type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
   });
   const url = URL.createObjectURL(blob);
   const a   = document.createElement('a');
   a.href = url;
-  const utypeLabel = d.utype === 'upper' ? 'Upper' : d.utype === 'basement' ? 'Basement' : 'House';
-  a.download = `Lease_${utypeLabel}_${(d.tenants[0] || 'Tenant').replace(/ /g,'_')}.docx`;
+  a.download = `Lease_${(d.tenants[0] || 'Tenant').replace(/[^A-Za-z0-9]+/g,'_')}.docx`;
   document.body.appendChild(a); a.click(); a.remove();
   URL.revokeObjectURL(url);
   closeModal();
-  toast('Lease downloaded from template!', 'ok');
+  toast('Lease generated from template ✓', 'ok');
+}
+
+// Fills Word content controls in docx XML by matching placeholder text in document order.
+// replacements: array of { text: 'placeholder text', value: 'replacement' | null }
+// null value = keep as-is. Matching is fuzzy (trims + normalises whitespace).
+function fillDocxContentControls(xmlString, replacements) {
+  let vi = 0; // index into replacements
+
+  return xmlString.replace(/<w:sdt>([\s\S]*?)<\/w:sdt>/g, (sdtBlock) => {
+    if (vi >= replacements.length) return sdtBlock;
+
+    // Extract text from <w:sdtContent>
+    const cMatch = sdtBlock.match(/<w:sdtContent\b[^>]*>([\s\S]*?)<\/w:sdtContent>/);
+    if (!cMatch) return sdtBlock;
+    const rawText = cMatch[1].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+
+    const rep = replacements[vi];
+    const expNorm = rep.text.replace(/\s+/g, ' ').trim();
+
+    // Accept if text == expected, or one contains the other (handles truncated placeholders)
+    if (rawText !== expNorm &&
+        !rawText.includes(expNorm) &&
+        !expNorm.includes(rawText)) {
+      return sdtBlock; // no match — don't advance index
+    }
+
+    vi++;
+    if (rep.value === null || rep.value === undefined) return sdtBlock; // keep as-is
+
+    const safe = String(rep.value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+    const spaceAttr = /^\s|\s$/.test(String(rep.value)) ? ' xml:space="preserve"' : '';
+
+    // Remove <w:showingPlcHdr/> so Word knows the placeholder was filled
+    let result = sdtBlock.replace(/<w:showingPlcHdr\s*\/>/g, '');
+
+    // Replace first <w:t> in sdtContent with new value; clear any additional <w:t> runs
+    result = result.replace(
+      /(<w:sdtContent\b[^>]*>)([\s\S]*?)(<\/w:sdtContent>)/,
+      (_, open, inner, close) => {
+        let first = true;
+        const newInner = inner.replace(/<w:t(?:\s[^>]*)?>[\s\S]*?<\/w:t>/g, () => {
+          if (first) { first = false; return `<w:t${spaceAttr}>${safe}</w:t>`; }
+          return '<w:t></w:t>';
+        });
+        return open + newInner + close;
+      }
+    );
+    return result;
+  });
+}
+
+// Builds the ordered array of { text, value } replacements for the 21 content controls
+// in Lease Template.docx, matching document order.
+function buildTemplateReplacements(d) {
+  const startDt = new Date(d.start  + 'T12:00:00');
+  const endDt   = new Date(d.end    + 'T12:00:00');
+  const agDt    = new Date(d.agdate + 'T12:00:00');
+
+  const mo   = dt => dt.toLocaleDateString('en-CA', { month: 'long' });
+  const day  = dt => String(dt.getDate());
+  const yr   = dt => String(dt.getFullYear());
+  const rentFmt = n => '$' + Number(n).toLocaleString('en-CA',
+    { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  const landlordName  = (d.land   || d.app?.landlordName  || 'Lasi P. Management').trim();
+  const landlordAddr  = (d.laddr  || d.app?.landlordAddress || '').trim();
+  const landlordEmail = (d.lemail || d.app?.landlordEmail  || '').trim();
+  const landlordPhone = formatPhone(d.lphone || d.app?.landlordPhone || '') ||
+                        (d.lphone || d.app?.landlordPhone || '').trim();
+
+  const tenantNames = d.tenants.join(' AND ');
+
+  // Utility clause — prefer PM-section free text if set, else build from wizard choice
+  const uWord  = d.utype==='upper'?'upstairs':d.utype==='basement'?'basement':'entire house';
+  const uOther = d.utype==='upper'?'basement':'upstairs';
+  const uShare = d.utype==='upper'?'65':'35';
+  const uOtherShare = d.utype==='upper'?'35':'65';
+  const utilityText = d.utils==='included'
+    ? 'Included in rent — Landlord pays all utilities (electricity, gas, water, sewer, garbage).'
+    : d.utils==='tenant'
+    ? 'Tenant pays 100% of all utilities (electricity, gas, water, sewer, garbage).'
+    : d.utils==='other'
+    ? (d.utilCustom || 'As separately agreed between Landlord and Tenant.')
+    : `${uWord.charAt(0).toUpperCase()+uWord.slice(1)} unit tenant pays ${uShare}%, ` +
+      `${uOther} unit tenant pays ${uOtherShare}% of the total monthly utility bill ` +
+      `(electricity, gas, water, sewer, garbage).`;
+  // utilityText is already built from wizard selection (including custom clause pre-filled from PM section)
+  const finalUtility = utilityText.trim();
+
+  // Tenant contact line for signature page
+  const tenantContact = [
+    d.app?.phone1  ? formatPhone(d.app.phone1)  || d.app.phone1 : '',
+    d.app?.email   || '',
+    d.tenants[1] && d.app?.coPhone1 ? formatPhone(d.app.coPhone1) || d.app.coPhone1 : '',
+    d.tenants[1] && d.app?.coEmail  ? d.app.coEmail : '',
+  ].filter(Boolean).join(' | ');
+
+  return [
+    // [0]  Day of month (agreement date)
+    { text: 'Day of month',                    value: day(agDt) },
+    // [1]  Month Name (agreement date)
+    { text: 'Month Name',                      value: mo(agDt) },
+    // [2]  Year (agreement date)
+    { text: 'Year',                            value: yr(agDt) },
+    // [3]  Name of the Landlord
+    { text: 'Name of the Landlord',            value: landlordName },
+    // [4]  Primary Name AND Cosigner Name
+    { text: 'Primary Name AND Cosigner Name',  value: tenantNames },
+    // [5]  Address of property
+    { text: 'Address of property',             value: d.addr },
+    // [6]  Day of move-in date
+    { text: 'Day of Date occupancy desired',   value: day(startDt) },
+    // [7]  Month of move-in date
+    { text: 'Month of Date occupancy desired', value: mo(startDt) },
+    // [8]  Last day of end month
+    { text: 'Last Day of month, calculated one year from Date occupancy desired', value: day(endDt) },
+    // [9]  End month name
+    { text: 'Last Day of month, calculated one year from Date occupancy desired', value: mo(endDt) },
+    // [10] End year
+    { text: 'Year',                            value: yr(endDt) },
+    // [11] Monthly Rent (first occurrence)
+    { text: 'Monthly Rent',                    value: rentFmt(d.rent) },
+    // [12] Utility Notes
+    { text: 'Utility Notes',                   value: finalUtility },
+    // [13] Appliances (placeholder text is an existing appliance list — partial match)
+    { text: 'refrigerator',                    value: d.appliances || 'as currently installed' },
+    // [14] Guest days — keep as-is
+    { text: '07',                              value: null },
+    // [15] Monthly Rent (second occurrence)
+    { text: 'Monthly Rent',                    value: rentFmt(d.rent) },
+    // [16] Landlord's Address
+    { text: "Landlord's Address",              value: landlordAddr },
+    // [17] Landlord's Email
+    { text: "Landlord's Email",                value: landlordEmail },
+    // [18] Landlord's Phone
+    { text: "Landlord's Phone",                value: landlordPhone },
+    // [19] Tenant signature names
+    { text: 'Primary Tenant Name | Cosigner Name', value: tenantNames },
+    // [20] Tenant contact info
+    { text: 'Primary Tenant Phone | Email | Cosigner Email | Phone', value: tenantContact },
+  ];
 }
 
 // Builds the data object that fills {{placeholders}} in the Word lease template.
