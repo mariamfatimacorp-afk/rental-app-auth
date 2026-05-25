@@ -539,7 +539,7 @@ const LEASE_TEMPLATE_PATH = 'Rental Applications/Lease_Template.docx';
 const IS_DEMO    = false;
 const SP_READY   = true;
 // Bump this string whenever parseRentalAppText() changes so old cached data auto-reruns
-const PARSE_VERSION = '10';
+const PARSE_VERSION = '11';
 const SP_USE_LIST = SP_LIST !== 'YOUR_APPLICATIONS_LIST_ID';
 
 // User roles — email must match Microsoft account username (lowercase)
@@ -1649,43 +1649,36 @@ async function extractPdfData(app) {
       }
     }
 
-    // Pass 2: extract raw text using row-based (Y-position) grouping with column-gap
-    // detection. Items at the same Y are sorted left-to-right. When consecutive items
-    // have a horizontal gap > 35 PDF pts (a column boundary), a newline is inserted so
-    // each logical field lands on its own line. This prevents blank fields from capturing
-    // the adjacent column's label, and stops "Name: Value  Phone: 123" from bleeding the
-    // phone into the name capture.
+    // Pass 2: extract raw text using midpoint-interleaved column extraction.
+    // Items at the same Y are split at the page midpoint: left-column items get
+    // one line, right-column items get the next line. Rows are interleaved in
+    // Y order (top-to-bottom) so the document reading order is preserved across
+    // all sections. This prevents a blank left-column field from capturing the
+    // adjacent right-column label as its value, while keeping label+value within
+    // the same column on the same output line.
     let rawText = '';
     for (let p = 1; p <= pdf.numPages; p++) {
       const page    = await pdf.getPage(p);
       const content = await page.getTextContent();
+      const vp      = page.getViewport({ scale: 1 });
+      const midX    = vp.width / 2;
 
       const rowMap = {};
       for (const item of content.items) {
         if (!item.str.trim()) continue;
         const y = Math.round(item.transform[5] / 3) * 3; // 3-unit Y tolerance
         if (!rowMap[y]) rowMap[y] = [];
-        rowMap[y].push({ x: item.transform[4], str: item.str, w: item.width || 0 });
+        rowMap[y].push({ x: item.transform[4], str: item.str });
       }
       // Sort rows top-to-bottom (PDF Y is bottom-up → higher Y = higher on page)
       const sortedYs = Object.keys(rowMap).map(Number).sort((a, b) => b - a);
       for (const y of sortedYs) {
-        rowMap[y].sort((a, b) => a.x - b.x); // left-to-right within each row
-        let rowText = '';
-        let prevEndX = null;
-        for (const item of rowMap[y]) {
-          if (prevEndX !== null) {
-            const gap = item.x - prevEndX;
-            // Gap > 35 pts = column boundary → split to new line
-            // Gap ≤ 35 pts = normal word spacing → single space
-            rowText += gap > 35 ? '\n' : ' ';
-          }
-          rowText += item.str;
-          // estimate end-X: use PDF-reported width when available, else ~5 pts/char
-          prevEndX = item.x + (item.w > 0 ? item.w : item.str.length * 5);
-        }
-        const txt = rowText.trim();
-        if (txt) rawText += txt + '\n';
+        const items = rowMap[y].sort((a, b) => a.x - b.x);
+        // Left column items (x < midX) on one line, right column items on the next
+        const leftTxt  = items.filter(i => i.x <  midX).map(i => i.str).join(' ').trim();
+        const rightTxt = items.filter(i => i.x >= midX).map(i => i.str).join(' ').trim();
+        if (leftTxt)  rawText += leftTxt  + '\n';
+        if (rightTxt) rawText += rightTxt + '\n';
       }
     }
 
@@ -1878,9 +1871,9 @@ function parseRentalAppText(raw) {
   ]);
   const empSupervisor = stripTrailing(empSupervisorRaw);
 
-  // Supervisor phone: same-line OR separate column (two-column PDFs put Phone in right col)
+  // Supervisor phone: may be on the same line OR the next line (right column in midpoint split)
   const empSupPhone = getIn(sec4, [
-    /Supervisor[\s\S]{0,6}Name[^\n]*?(?:Phone|Tel)\s*:\s*([0-9()\s.\-]{7,20})/i,
+    /Supervisor[\s\S]{0,6}Name[\s\S]{1,200}?(?:Phone|Tel)\s*:\s*([0-9()\s.\-]{7,20})/i,
     /Supervisor[\s\S]{0,6}(?:Phone|Tel|Cell|#)\s*:\s*([0-9()\s.\-]{7,20})/i,
     /Supervisor[\s\S]{3,900}?\n(?!Phone\s*[12]\s*:)Phone\s*:\s*([0-9]{7,15})/i,
   ]);
@@ -1905,7 +1898,7 @@ function parseRentalAppText(raw) {
   ]);
   const coEmpSupervisor = stripTrailing(coEmpSupervisorRaw);
   const coEmpSupPhone   = getIn(sec5, [
-    /Supervisor[\s\S]{0,6}Name[^\n]*?(?:Phone|Tel)\s*:\s*([0-9()\s.\-]{7,20})/i,
+    /Supervisor[\s\S]{0,6}Name[\s\S]{1,200}?(?:Phone|Tel)\s*:\s*([0-9()\s.\-]{7,20})/i,
     /Supervisor[\s\S]{0,6}(?:Phone|Tel|Cell|#)\s*:\s*([0-9()\s.\-]{7,20})/i,
     /Supervisor[\s\S]{3,600}?\n(?!Phone\s*[12]\s*:)Phone\s*:\s*([0-9]{7,15})/i,
   ]);
