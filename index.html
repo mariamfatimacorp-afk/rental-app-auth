@@ -541,7 +541,7 @@ const LEASE_TEMPLATE_PATH = 'Rental Applications/Lease Template.docx';
 const IS_DEMO    = false;
 const SP_READY   = true;
 // Bump this string whenever parseRentalAppText() changes so old cached data auto-reruns
-const PARSE_VERSION = '15';
+const PARSE_VERSION = '16';
 
 // ── PHONE FORMATTING ──────────────────────────────────────────────────────────
 // Normalises any phone string to "000-000-0000". Returns original if not 10-digit.
@@ -2051,23 +2051,45 @@ function parseRentalAppText(raw) {
       /Assigned\s+(?:Property\s+)?Manager\s*:\s*([^\n]{2,60})/i,
     ]),
 
-    // Desired occupancy: value may be on same line, next line, or previous line
-    // (midpoint extraction puts value-in-right-col on a separate line from label)
+    // Desired occupancy — tries each approach in turn, returns first that yields a valid year.
+    // ROOT-CAUSE NOTE: \s* after ":" includes \n and would silently grab the NEXT line's text
+    // (e.g. "Maximum no. of occupants: 2") before the value-before-label patterns ever run.
+    // Fix: same-line patterns use [ \t]* (horizontal whitespace only) after the colon.
     desiredOccupancy: (() => {
-      const v = get([
-        /Date\s+(?:occupancy\s+)?desired\s*:\s*([^\n]{2,30})/i,           // value same line
-        /(?:Desired\s+)?(?:Move.?[Ii]n|Occupancy)\s+Date\s*:\s*([^\n]{2,30})/i,
-        /(?:Possession|Entry|Tenancy\s+Start)\s+Date\s*:\s*([^\n]{2,30})/i,
-        /Move.?[Ii]n\s*:\s*([^\n]{2,30})/i,
-        /([0-9][\d\s\-\/\.]{3,13}[0-9])[ \t]*(?:\n[ \t]*)+Date\s+(?:occupancy\s+)?desired/i, // value BEFORE label (allows blank lines)
-        /Date\s+(?:occupancy\s+)?desired\s*:\s*\n\s*([0-9][\d\s\-\/\.]{3,13}[0-9])/i, // value AFTER label
+      const tryDate = raw => {
+        if (!raw) return '';
+        const c = cleanDate(raw.trim().replace(/\s{2,}/g, ' '));
+        return (c && /(19|20)\d{2}/.test(c)) ? c : '';
+      };
+
+      // 1. Value on the SAME LINE as the label
+      //    [ \t]* after colon = spaces/tabs only, never crosses a newline
+      for (const p of [
+        /Date\s+(?:occupancy\s+)?desired\s*:[ \t]*([^\n]{2,30})/i,
+        /(?:Desired\s+)?(?:Move.?[Ii]n|Occupancy)\s+Date\s*:[ \t]*([^\n]{2,30})/i,
+        /(?:Possession|Entry|Tenancy\s+Start)\s+Date\s*:[ \t]*([^\n]{2,30})/i,
+        /Move.?[Ii]n\s*:[ \t]*([^\n]{2,30})/i,
+      ]) { const m = t.match(p); const r = m && tryDate(m[1]); if (r) return r; }
+
+      // 2. Value on the line(s) BEFORE the label — lookback approach
+      //    Find the label position, slice the preceding text, match a date at its end.
+      //    More reliable than a forward regex because it avoids greedy \s consuming newlines.
+      const lblM = t.match(/Date\s+(?:occupancy\s+)?desired\s*:/i)
+                || t.match(/(?:Move.?[Ii]n|Occupancy)\s+Date\s*:/i);
+      if (lblM) {
+        const before = t.slice(Math.max(0, lblM.index - 50), lblM.index).replace(/\s+$/, '');
+        const dm = before.match(/([0-9][\d \-\/\.]{1,14}[0-9])$/);
+        const r = dm && tryDate(dm[1]);
+        if (r) return r;
+      }
+
+      // 3. Value on the line AFTER the label
+      for (const p of [
+        /Date\s+(?:occupancy\s+)?desired\s*:\s*\n\s*([0-9][\d\s\-\/\.]{3,13}[0-9])/i,
         /(?:Move.?[Ii]n|Occupancy)\s+Date\s*:\s*\n\s*([0-9][\d\s\-\/\.]{3,13}[0-9])/i,
-      ]);
-      if (!v) return '';
-      const cleaned = cleanDate(v);
-      // Validate: must contain a plausible year (1900-2099) — rejects non-date strings like "Maximum no. of occupants: 2"
-      if (!cleaned || !/(?:19|20)\d{2}/.test(cleaned)) return '';
-      return cleaned;
+      ]) { const m = t.match(p); const r = m && tryDate(m[1]); if (r) return r; }
+
+      return '';
     })(),
 
     maxOccupants: get([
