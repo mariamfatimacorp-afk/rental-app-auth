@@ -541,7 +541,7 @@ const LEASE_TEMPLATE_PATH = 'Rental Applications/Lease Template.docx';
 const IS_DEMO    = false;
 const SP_READY   = true;
 // Bump this string whenever parseRentalAppText() changes so old cached data auto-reruns
-const PARSE_VERSION = '12';
+const PARSE_VERSION = '13';
 
 // ── PHONE FORMATTING ──────────────────────────────────────────────────────────
 // Normalises any phone string to "000-000-0000". Returns original if not 10-digit.
@@ -2054,7 +2054,11 @@ function parseRentalAppText(raw) {
         /Date\s+(?:occupancy\s+)?desired\s*:\s*\n\s*([0-9][\d\s\-\/\.]{3,13}[0-9])/i, // value AFTER label
         /(?:Move.?[Ii]n|Occupancy)\s+Date\s*:\s*\n\s*([0-9][\d\s\-\/\.]{3,13}[0-9])/i,
       ]);
-      return v ? cleanDate(v) : '';
+      if (!v) return '';
+      const cleaned = cleanDate(v);
+      // Validate: must contain a plausible year (1900-2099) — rejects non-date strings like "Maximum no. of occupants: 2"
+      if (!cleaned || !/(?:19|20)\d{2}/.test(cleaned)) return '';
+      return cleaned;
     })(),
 
     maxOccupants: get([
