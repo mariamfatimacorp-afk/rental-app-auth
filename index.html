@@ -541,7 +541,7 @@ const LEASE_TEMPLATE_PATH = 'Rental Applications/Lease Template.docx';
 const IS_DEMO    = false;
 const SP_READY   = true;
 // Bump this string whenever parseRentalAppText() changes so old cached data auto-reruns
-const PARSE_VERSION = '16';
+const PARSE_VERSION = '17';
 
 // ── PHONE FORMATTING ──────────────────────────────────────────────────────────
 // Normalises any phone string to "000-000-0000". Returns original if not 10-digit.
@@ -1461,7 +1461,6 @@ function selApp(id) {
         <h3><span class="icon">👤</span> Primary Applicant</h3>
         ${frow('Full Legal Name', a.name, '', 'name')}
         ${frow('Date of Birth', a.dob, '', 'dob')}
-        ${frow('SIN (last 3 digits or X)', a.sin, '', 'sin')}
         ${frow('Email', a.email, '', 'email')}
         ${frow('Phone (Cell)', a.phone1, '', 'phone1')}
         ${frow('Phone (Home / Alt)', a.phone2, '', 'phone2')}
@@ -1494,7 +1493,6 @@ function selApp(id) {
         </h3>
         ${frow('Full Legal Name', a.coName, '', 'coName')}
         ${frow('Date of Birth', a.coDob, '', 'coDob')}
-        ${frow('SIN (last 3 digits or X)', a.coSIN, '', 'coSIN')}
         ${frow('Email', a.coEmail, '', 'coEmail')}
         ${frow('Phone (Cell)', a.coPhone1, '', 'coPhone1')}
         ${frow('Phone (Home / Alt)', a.coPhone2, '', 'coPhone2')}
@@ -1911,10 +1909,10 @@ function parseRentalAppText(raw) {
   let em; while ((em = emailRe.exec(t)) !== null) allEmails.push(em[1]);
 
   // ── STEP 5: Pre-compute fields that need stripTrailing ────────────────────
-  const sec1 = SEC[1] || t;   // Personal info
-  const sec3 = SEC[3] || t;   // Previous tenancy
-  const sec4 = SEC[4] || t;   // Primary employment
-  const sec5 = SEC[5] || '';  // Co-applicant employment
+  const sec1 = SEC[1] || t;   // Personal info          (PDF section 1)
+  const sec3 = SEC[3] || t;   // Previous tenancy       (PDF section 3)
+  const sec4 = SEC[2] || t;   // Primary employment     (PDF section 2 — NOT 4)
+  const sec5 = SEC[5] || '';  // Co-applicant employment (PDF section 5)
 
   // Emails: section 1 first, then section 2
   const email1 = getIn(sec1, [
@@ -2169,10 +2167,10 @@ function parseRentalAppText(raw) {
       /other\s+sources\s+of\s+income[^\n]*\n([^\n]{5,200})/i,
     ]),
 
-    // ── Co-Applicant Personal (Section 2) ────────────────────────────────
-    // All fields scoped to SEC[2] so they never bleed from primary applicant section
+    // ── Co-Applicant Personal (Section 4) ────────────────────────────────
+    // All fields scoped to SEC[4] — co-applicant personal is section 4 in this PDF format
     coName: (() => {
-      const v = getIn(SEC[2], [
+      const v = getIn(SEC[4], [
         /Name\s*:\s*([^\n]{2,60})/i,
         /Full\s+(?:Legal\s+)?Name\s*:\s*([^\n]{2,60})/i,
         // value on next line (two-column PDF layout)
@@ -2181,28 +2179,28 @@ function parseRentalAppText(raw) {
       return v && !looksLikeLabel(v) ? v.trim() : '';
     })(),
     coDob: (() => {
-      const v = getIn(SEC[2], [
+      const v = getIn(SEC[4], [
         /Date\s+of\s+Birth\s*:\s*([0-9][\d\s\-\/\.]{4,20})/i,
         /\bDOB\b[:\s]+([0-9][\d\s\-\/\.]{4,20})/i,
       ]);
       return v ? cleanDate(v) : '';
     })(),
-    coSIN: getIn(SEC[2], [/\bS\.?I\.?N\.?\s*:\s*([0-9xX*]{3}[\s\-]?[0-9xX*]{3}[\s\-]?[0-9xX*]{3})/i]),
-    coEmail: getIn(SEC[2], [
+    coSIN: getIn(SEC[4], [/\bS\.?I\.?N\.?\s*:\s*([0-9xX*]{3}[\s\-]?[0-9xX*]{3}[\s\-]?[0-9xX*]{3})/i]),
+    coEmail: getIn(SEC[4], [
       /E\s*[-–]\s*mail\s+address\s*:\s*([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,6})/i,
       /[Ee]-?[Mm]ail\s*(?:address\s*)?:\s*([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,6})/i,
     ]) || email2,
-    coPhone1: getIn(SEC[2], [
+    coPhone1: getIn(SEC[4], [
       /Phone\s*1\s*:\s*([0-9()\s.\-+]{7,20})/i,
       /Cell\s*(?:#|No\.?|Phone)?\s*:\s*([0-9()\s.\-+]{7,20})/i,
       /Phone\s*(?:#|No\.?|1)?\s*:\s*([0-9()\s.\-+]{7,20})/i,
     ]),
-    coPhone2: getIn(SEC[2], [
+    coPhone2: getIn(SEC[4], [
       /Phone\s*2\s*:\s*([0-9()\s.\-+]{7,20})/i,
       /Alt(?:ernate)?\s*(?:Phone|#)?\s*:\s*([0-9()\s.\-+]{7,20})/i,
     ]),
     coCurrentAddress: (() => {
-      const v = getIn(SEC[2], [
+      const v = getIn(SEC[4], [
         /Current\s+(?:Residential\s+)?Address\s*:\s*([^\n]{5,120})/i,
         /Present\s+Address\s*:\s*([^\n]{5,120})/i,
         // value on next line
