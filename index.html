@@ -541,7 +541,7 @@ const LEASE_TEMPLATE_PATH = 'Rental Applications/Lease Template.docx';
 const IS_DEMO    = false;
 const SP_READY   = true;
 // Bump this string whenever parseRentalAppText() changes so old cached data auto-reruns
-const PARSE_VERSION = '13';
+const PARSE_VERSION = '14';
 
 // ── PHONE FORMATTING ──────────────────────────────────────────────────────────
 // Normalises any phone string to "000-000-0000". Returns original if not 10-digit.
@@ -1876,6 +1876,15 @@ function parseRentalAppText(raw) {
     return v.trim().replace(/\s*[-\/]\s*/g, '-').replace(/[^0-9\-\/]+$/g, '').trim();
   }
 
+  // Returns true when a regex-captured value is actually a PDF form field label
+  // (occurs when two column labels land on the same extracted line, e.g.
+  //  "Full Legal Name: Social Insurance Number (optional)")
+  function looksLikeLabel(s) {
+    if (!s || s.length < 2) return false;
+    return /^(?:Social\s+Insurance\s+Number|S\.?I\.?N\.?\s*[\(\(]|E\s*[-–]\s*mail\b|Supervisor['''’]?s?\s+(?:Name|Phone)|Name\s+of\s+Employer|Employer['''’]?s?\s+(?:Name|Address)|(?:Business|Work|Company|Employer|Current|Present|Mailing|Previous)\s+Address|Full\s+(?:Legal\s+)?Name|Date\s+of\s+Birth|Length\s+of\s+Employment|Monthly\s+(?:Gross\s+)?(?:Income|Wage|Salary)|Position\s*(?:\/\s*Title)?|Phone\s*(?:Number|[12]|Cell|Home|Alt)?$|Other\s+(?:Sources?\s+of\s+)?Income|Emergency\s+Contact|Relationship\b|Previous\s+(?:Rental\s+)?Address|Landlord['''’]?s?\s+(?:Name|Phone)|Reason\s+for\s+Leaving)\b/i.test(s.trim())
+        || /^Address\s*$|^Name\s*$/i.test(s.trim()); // single-word label catches
+  }
+
   // ── STEP 3: Section extraction ────────────────────────────────────────────
   // This PDF uses numbered sections (1.) through (9.). Extracting each section
   // prevents fields from one section bleeding into another.
@@ -2140,10 +2149,15 @@ function parseRentalAppText(raw) {
 
     // ── Co-Applicant Personal (Section 2) ────────────────────────────────
     // All fields scoped to SEC[2] so they never bleed from primary applicant section
-    coName: getIn(SEC[2], [
-      /Name\s*:\s*([^\n]{2,60})/i,
-      /Full\s+(?:Legal\s+)?Name\s*:\s*([^\n]{2,60})/i,
-    ]),
+    coName: (() => {
+      const v = getIn(SEC[2], [
+        /Name\s*:\s*([^\n]{2,60})/i,
+        /Full\s+(?:Legal\s+)?Name\s*:\s*([^\n]{2,60})/i,
+        // value on next line (two-column PDF layout)
+        /Full\s+(?:Legal\s+)?Name\s*:\s*\n\s*([^\n]{2,60})/i,
+      ]);
+      return v && !looksLikeLabel(v) ? v.trim() : '';
+    })(),
     coDob: (() => {
       const v = getIn(SEC[2], [
         /Date\s+of\s+Birth\s*:\s*([0-9][\d\s\-\/\.]{4,20})/i,
@@ -2165,10 +2179,15 @@ function parseRentalAppText(raw) {
       /Phone\s*2\s*:\s*([0-9()\s.\-+]{7,20})/i,
       /Alt(?:ernate)?\s*(?:Phone|#)?\s*:\s*([0-9()\s.\-+]{7,20})/i,
     ]),
-    coCurrentAddress: getIn(SEC[2], [
-      /Current\s+Address\s*:\s*([^\n]{5,120})/i,
-      /Present\s+Address\s*:\s*([^\n]{5,120})/i,
-    ]),
+    coCurrentAddress: (() => {
+      const v = getIn(SEC[2], [
+        /Current\s+(?:Residential\s+)?Address\s*:\s*([^\n]{5,120})/i,
+        /Present\s+Address\s*:\s*([^\n]{5,120})/i,
+        // value on next line
+        /Current\s+(?:Residential\s+)?Address\s*:\s*\n\s*([^\n]{5,120})/i,
+      ]);
+      return v && !looksLikeLabel(v) ? v.trim() : '';
+    })(),
 
     // ── Co-Applicant Employment (Section 5) ──────────────────────────────
     // All fields scoped to sec5 (SEC[5] || '') — empty if no co-applicant employment
@@ -2184,18 +2203,30 @@ function parseRentalAppText(raw) {
       if (/\bRetired\b/i.test(sec5)) return 'Retired';
       return '';
     })(),
-    coEmpEmployer: getIn(sec5, [
-      /Current\s+Employer\s*:\s*([^\n]{2,70})/i,
-      /(?:Name\s+of\s+)?Employer['']?s?\s+Name\s*:\s*([^\n]{2,70})/i,
-      /Name\s+of\s+(?:Current\s+)?Employer\s*:\s*([^\n]{2,70})/i,
-      /Employer['']?s?\s+(?:Name\s*)?:\s*([^\n]{2,70})/i,
-      /Company\s+Name\s*:\s*([^\n]{2,70})/i,
-    ]),
-    coEmpAddress: getIn(sec5, [
-      /Current\s+Employer[^\n]+\nAddress\s*:\s*([^\n]{5,120})/i,
-      /(?:Address\s+of\s+|Employer['']?s?\s+)?(?:Employer|Business|Work|Company)\s+Address\s*:\s*([^\n]{5,120})/i,
-      /Work\s+Location\s*:\s*([^\n]{5,120})/i,
-    ]),
+    coEmpEmployer: (() => {
+      const v = getIn(sec5, [
+        /Current\s+Employer\s*:\s*([^\n]{2,70})/i,
+        /(?:Name\s+of\s+)?Employer['''']?s?\s+Name\s*:\s*([^\n]{2,70})/i,
+        /Name\s+of\s+(?:Current\s+)?Employer\s*:\s*([^\n]{2,70})/i,
+        /Employer['''']?s?\s+(?:Name\s*)?:\s*([^\n]{2,70})/i,
+        /Company\s+Name\s*:\s*([^\n]{2,70})/i,
+        // value on next line
+        /(?:Name\s+of\s+)?Employer['''']?s?\s+Name\s*:\s*\n\s*([^\n]{2,70})/i,
+      ]);
+      return v && !looksLikeLabel(v) ? v.trim() : '';
+    })(),
+    coEmpAddress: (() => {
+      const v = getIn(sec5, [
+        /Current\s+Employer[^\n]+\nAddress\s*:\s*([^\n]{5,120})/i,
+        /(?:Address\s+of\s+|Employer['''']?s?\s+)?(?:Employer|Business|Work|Company)\s+Address\s*:\s*([^\n]{5,120})/i,
+        /Work\s+Location\s*:\s*([^\n]{5,120})/i,
+        // value on next line
+        /(?:Employer|Business|Work)\s+Address\s*:\s*\n\s*([^\n]{5,120})/i,
+        // standalone "Address:" label immediately followed by value
+        /\bAddress\s*:\s*([0-9][^\n]{4,119})/i,
+      ]);
+      return v && !looksLikeLabel(v) ? v.trim() : '';
+    })(),
     coEmpPosition: (() => {
       const v = getIn(sec5, [
         /Job\s+Position\s*:\s*([^\n]{2,60})/i,
@@ -2229,13 +2260,20 @@ function parseRentalAppText(raw) {
       /Last\s+(?:Known\s+)?Address\s*:\s*([^\n]{5,120})/i,
     ]),
 
-    // "Landlord ' s Name: Sony" — spaces around apostrophe
-    prevLandlordName: getIn(sec3, [
-      /Landlord\s*['''`]?\s*s\s+Name\s*:\s*([^\n]{2,70})/i,
-      /(?:Previous\s+|Former\s+)?Landlord\s+Name\s*:\s*([^\n]{2,70})/i,
-      /Name\s+of\s+(?:Previous\s+|Former\s+)?Landlord\s*:\s*([^\n]{2,70})/i,
-      /Landlord\s*:\s*([A-Za-z][^\n]{1,60})/i,  // broad fallback: "Landlord: Value"
-    ]),
+    // "Landlord ' s Name: Sony" — spaces around apostrophe; value may be on same or next line
+    prevLandlordName: (() => {
+      const v = getIn(sec3, [
+        /Landlord\s*['''`'']?\s*s\s+Name\s*:\s*([^\n]{2,70})/i,
+        /(?:Previous\s+|Former\s+)?Landlord\s+Name\s*:\s*([^\n]{2,70})/i,
+        /Name\s+of\s+(?:Previous\s+|Former\s+)?Landlord\s*:\s*([^\n]{2,70})/i,
+        // value on next line (two-column PDF layout)
+        /Landlord\s*['''`'']?\s*s\s+Name\s*:\s*\n\s*([^\n]{2,70})/i,
+        /(?:Previous\s+|Former\s+)?Landlord\s+Name\s*:\s*\n\s*([^\n]{2,70})/i,
+        /Name\s+of\s+(?:Previous\s+|Former\s+)?Landlord\s*:\s*\n\s*([^\n]{2,70})/i,
+        /Landlord\s*:\s*([A-Za-z][^\n]{1,60})/i,  // broad fallback: "Landlord: Value"
+      ]);
+      return v && !looksLikeLabel(v) ? v.trim() : '';
+    })(),
 
     prevLandlordPhone: getIn(sec3, [
       /Landlord\s*['''`]?\s*s\s+Phone\s*:\s*([0-9()\s.\-]{7,20})/i,
