@@ -539,7 +539,7 @@ const LEASE_TEMPLATE_PATH = 'Rental Applications/Lease_Template.docx';
 const IS_DEMO    = false;
 const SP_READY   = true;
 // Bump this string whenever parseRentalAppText() changes so old cached data auto-reruns
-const PARSE_VERSION = '9';
+const PARSE_VERSION = '10';
 const SP_USE_LIST = SP_LIST !== 'YOUR_APPLICATIONS_LIST_ID';
 
 // User roles — email must match Microsoft account username (lowercase)
@@ -2186,12 +2186,28 @@ function parseRentalAppText(raw) {
       /Rent\s+(?:Paid|Amount)\s*:\s*\$?\s*([\d,]{2,8})/i,
     ]),
 
-    prevReason: getIn(sec3, [
-      /Reason\s+For\s+Leaving\s*:\s*([^\n]{2,150})/i,
-      /Reason\s+for\s+(?:Leaving|Moving|Vacating)\s*:\s*([^\n]{2,150})/i,
-      /Why\s+(?:are\s+you|did\s+you)\s+(?:leaving|moving)\s*:\s*([^\n]{2,150})/i,
-      /Reason\s+for\s+Vacating\s*:\s*([^\n]{2,150})/i,
-    ]),
+    // prevReason: uses an IIFE so we can join wrapped lines and allow long text
+    prevReason: (() => {
+      if (!sec3) return '';
+      for (const p of [
+        // Multi-line: capture across soft-wrapped lines, stop at next "Label:" or blank line
+        /Reason\s+[Ff]or\s+[Ll]eaving\s*:\s*([\s\S]{5,500}?)(?=\n[A-Z][A-Za-z ]+:|\n\s*\n|$)/i,
+        /Reason\s+for\s+(?:Leaving|Moving|Vacating)\s*:\s*([\s\S]{5,500}?)(?=\n[A-Z][A-Za-z ]+:|\n\s*\n|$)/i,
+        /Why\s+(?:are\s+you|did\s+you)\s+(?:leaving|moving)\s*:\s*([\s\S]{5,500}?)(?=\n[A-Z][A-Za-z ]+:|\n\s*\n|$)/i,
+        // Single-line fallbacks
+        /Reason\s+[Ff]or\s+[Ll]eaving\s*:\s*([^\n]{5,500})/i,
+        /Reason\s+for\s+(?:Leaving|Moving|Vacating)\s*:\s*([^\n]{5,500})/i,
+      ]) {
+        const m = sec3.match(p);
+        if (m && m[1]) {
+          // Collapse wrapped lines: replace newlines+surrounding spaces with single space
+          const v = m[1].replace(/[\r\n]+\s*/g, ' ').replace(/\s{2,}/g, ' ').trim()
+                        .replace(/^[:\|\s]+|[:\|\s]+$/g, '');
+          if (v.length >= 5 && v.length <= 500) return v;
+        }
+      }
+      return '';
+    })(),
 
     // ── Credit / Background (Section 6 — positional) ─────────────────────
     // Pre-computed positionally from SEC[6] to avoid "answered YES" false matches
