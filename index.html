@@ -631,14 +631,24 @@ async function init() {
   }
   try {
     await msalApp.initialize();
-    // Handle redirect response after Microsoft login returns to this page
+    // Handles both loginRedirect and acquireTokenRedirect responses
     const resp = await msalApp.handleRedirectPromise();
     if (resp?.account) { signIn(resp.account); return; }
-    // Check for already-cached account (returning user)
+    // Check for already-cached account (returning user, token still valid)
     const accounts = msalApp.getAllAccounts();
     if (accounts.length > 0) { signIn(accounts[0]); return; }
   } catch(e) {
     console.error('MSAL init error:', e);
+    const code = e.errorCode || '';
+    const msg  = e.message  || '';
+    // interaction_required / block_iframe_reload / AADSTS160021 = stale session, not a real error.
+    // Clear the bad cache state and drop back to the login screen quietly.
+    if (code === 'interaction_required' || code === 'login_required' ||
+        code === 'block_iframe_reload'  || code === 'monitor_window_timeout' ||
+        msg.includes('AADSTS') || msg.includes('interaction_required')) {
+      try { msalApp.clearCache(); } catch(_) {}
+      return; // login screen already visible; user just clicks Sign In again
+    }
     showLoginError('Authentication error: ' + e.message + '. Please refresh and try again.');
   }
 }
@@ -732,11 +742,13 @@ function doSwitchAccount() {
 async function getToken() {
   if (IS_DEMO || !msalApp) return null;
   try {
-    const r = await msalApp.acquireTokenSilent({ scopes: SCOPES, account: currentUser.account });
+    const r = await msalApp.acquireTokenSilent({ scopes: SCOPES, account: currentUser?.account });
     return r.accessToken;
-  } catch {
-    const r = await msalApp.acquireTokenPopup({ scopes: SCOPES });
-    return r.accessToken;
+  } catch(e) {
+    // acquireTokenPopup is blocked by COOP headers on GitHub Pages — use redirect instead
+    console.warn('Silent token refresh failed, redirecting for re-auth:', e.errorCode || e.message);
+    try { await msalApp.acquireTokenRedirect({ scopes: SCOPES }); } catch(re) { console.error('acquireTokenRedirect:', re); }
+    return null; // page is navigating away; caller will not continue
   }
 }
 
