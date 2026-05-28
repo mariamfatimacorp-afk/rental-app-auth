@@ -2599,7 +2599,10 @@ function openModal(id) {
   leaseApp = apps.find(a => String(a.id) === String(id));
   step = 0;
   document.getElementById('f_agdate').value = new Date().toISOString().split('T')[0];
-  document.getElementById('f_addr').value = leaseApp.propertyAddress + ', Calgary, Alberta';
+  // Only append ", Calgary, Alberta" if not already in the address
+  const rawAddr = leaseApp.propertyAddress || '';
+  document.getElementById('f_addr').value = /calgary|alberta/i.test(rawAddr)
+    ? rawAddr : rawAddr + ', Calgary, Alberta';
   document.getElementById('f_t1').value = leaseApp.name;
   document.getElementById('f_t2').value = leaseApp.coName || '';
   document.getElementById('f_t3').value = '';
@@ -2613,7 +2616,11 @@ function openModal(id) {
   if (leaseApp.utilityClause)   { document.getElementById('f_util_custom').value = leaseApp.utilityClause; document.querySelector('input[name="f_utils"][value="other"]').checked = true; toggleUtilCustom(); }
   const oc = leaseApp.desiredOccupancy;
   if (oc) {
-    const od = new Date(oc + 'T12:00:00');
+    // ISO date (YYYY-MM-DD): append T12:00:00 to avoid UTC-midnight timezone shift
+    // Formatted date (e.g. "June 1, 2026"): parse directly
+    const od = /^\d{4}-\d{2}-\d{2}$/.test(oc.trim())
+      ? new Date(oc.trim() + 'T12:00:00')
+      : new Date(oc);
     if (!isNaN(od)) {
       document.getElementById('f_start').value = od.toISOString().split('T')[0];
       const ed = new Date(od); ed.setFullYear(ed.getFullYear() + 1); ed.setDate(ed.getDate() - 1);
@@ -2840,8 +2847,15 @@ async function generateLeaseFromTemplate(d) {
 
 // Fills Word content controls in docx XML by matching placeholder text in document order.
 // replacements: array of { text: 'placeholder text', value: 'replacement' | null }
-// null value = keep as-is. Matching is fuzzy (trims + normalises whitespace).
+// null value = keep as-is. Matching is fuzzy (trims + normalises whitespace + smart quotes).
 function fillDocxContentControls(xmlString, replacements) {
+  // Normalise: collapse whitespace, convert all smart apostrophes/quotes to ASCII '
+  const norm = s => s
+    .replace(/<[^>]+>/g, '')
+    .replace(/[‘’‚‛′‵]/g, "'")
+    .replace(/[“”„‟″‶]/g, '"')
+    .replace(/\s+/g, ' ').trim();
+
   let vi = 0; // index into replacements
 
   return xmlString.replace(/<w:sdt>([\s\S]*?)<\/w:sdt>/g, (sdtBlock) => {
@@ -2850,10 +2864,10 @@ function fillDocxContentControls(xmlString, replacements) {
     // Extract text from <w:sdtContent>
     const cMatch = sdtBlock.match(/<w:sdtContent\b[^>]*>([\s\S]*?)<\/w:sdtContent>/);
     if (!cMatch) return sdtBlock;
-    const rawText = cMatch[1].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+    const rawText = norm(cMatch[1]);
 
     const rep = replacements[vi];
-    const expNorm = rep.text.replace(/\s+/g, ' ').trim();
+    const expNorm = norm(rep.text);
 
     // Accept if text == expected, or one contains the other (handles truncated placeholders)
     if (rawText !== expNorm &&
