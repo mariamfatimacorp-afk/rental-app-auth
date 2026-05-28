@@ -2632,7 +2632,7 @@ function openModal(id) {
       : new Date(oc);
     if (!isNaN(od)) {
       document.getElementById('f_start').value = od.toISOString().split('T')[0];
-      const ed = new Date(od); ed.setFullYear(ed.getFullYear() + 1); ed.setDate(ed.getDate() - 1);
+      const ed = new Date(od); ed.setFullYear(ed.getFullYear() + 1);
       document.getElementById('f_end').value = ed.toISOString().split('T')[0];
     }
   }
@@ -2830,9 +2830,29 @@ async function generateLeaseFromTemplate(d) {
   const zip = new PizZip(arrayBuf);
   let docXml = zip.file('word/document.xml').asText();
 
+  // ── PRE-PROCESSING: fix template anomalies before SDT fill ────────────────
+  // The start year is hardcoded as "2025" split across three bold/yellow runs.
+  // Replace with the actual start year from the lease data.
+  const startYr = String(new Date(d.start + 'T12:00:00').getFullYear());
+  docXml = docXml.replace(
+    /<w:r[^>]*><w:rPr><w:b\/><w:bCs\/><w:highlight w:val="yellow"\/><\/w:rPr><w:t>20<\/w:t><\/w:r><w:r[^>]*><w:rPr><w:b\/><w:bCs\/><w:highlight w:val="yellow"\/><\/w:rPr><w:t>2<\/w:t><\/w:r><w:r[^>]*><w:rPr><w:b\/><w:bCs\/><w:highlight w:val="yellow"\/><\/w:rPr><w:t>5<\/w:t><\/w:r>/,
+    `<w:r><w:rPr><w:b/><w:bCs/></w:rPr><w:t>${startYr}</w:t></w:r>`
+  );
+
   // Build ordered replacement list and fill content controls
   const replacements = buildTemplateReplacements(d);
   docXml = fillDocxContentControls(docXml, replacements);
+
+  // ── POST-PROCESSING: remove leftover template artefacts ────────────────────
+  // Strip the trailing plain-text "Last Day of month..." block (comma + space + text + space)
+  // that follows the end-year SDT — these are NOT content controls, must be removed manually.
+  docXml = docXml.replace(
+    /<w:r[^>]*><w:rPr><w:b\/><w:bCs\/><w:highlight w:val="yellow"\/><\/w:rPr><w:t>,<\/w:t><\/w:r><w:r[^>]*><w:rPr><w:b\/><w:bCs\/><w:highlight w:val="yellow"\/><\/w:rPr><w:t xml:space="preserve"> <\/w:t><\/w:r><w:r[^>]*><w:rPr><w:b\/><w:bCs\/><w:highlight w:val="yellow"\/><\/w:rPr><w:t>Last Day of month, calculated one year from Date occupancy desired<\/w:t><\/w:r><w:r[^>]*><w:rPr><w:b\/><w:bCs\/><w:highlight w:val="yellow"\/><\/w:rPr><w:t xml:space="preserve"> <\/w:t><\/w:r>/,
+    ''
+  );
+  // Remove all remaining yellow / lightGray highlights from the whole document.
+  // Values inserted into SDTs stay bold via existing <w:rPr><w:b/><w:bCs/> in the template runs.
+  docXml = docXml.replace(/<w:highlight\s+w:val="(?:yellow|lightGray)"\s*\/>/g, '');
 
   zip.file('word/document.xml', docXml);
 
