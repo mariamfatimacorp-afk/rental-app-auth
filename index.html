@@ -207,13 +207,17 @@ textarea.notes:focus{outline:none;border-color:var(--acc)}
       <p>&#9888; Demo mode — Microsoft login not configured.<br>Select your account to continue:</p>
       <select id="demoUser">
         <option value="">-- Select account --</option>
-        <option value="mariam.fatima@hotmail.com">Mariam Fatima (Admin)</option>
-        <option value="umairlasi@gmail.com">Umair Lasi (Admin)</option>
-        <option value="usattar@hotmail.com">Umair Lasi – MS Account (Admin)</option>
-        <option value="mariam@mfocorp.onmicrosoft.com">Mariam Corp (Admin)</option>
-        <option value="mariamfatimacorp@gmail.com">Mariam Alt (Admin)</option>
-        <option value="polypro786@gmail.com">PM 1 (Property Manager)</option>
-        <option value="t.alhabbal@gmail.com">PM 2 (Property Manager)</option>
+        <optgroup label="Admins (full access + lease)">
+          <option value="mariam@mfocorp.onmicrosoft.com">Mariam – Corp (Admin)</option>
+          <option value="umairlasi@gmail.com">Umair Lasi (Admin)</option>
+          <option value="usattar@hotmail.com">Umair Lasi – Hotmail (Admin)</option>
+        </optgroup>
+        <optgroup label="Property Managers (limited access)">
+          <option value="mariam.fatima@hotmail.com">Mariam Fatima (PM – Syed/Mariam)</option>
+          <option value="mariamfatimacorp@gmail.com">Mariam Corp Gmail (PM – Syed/Mariam)</option>
+          <option value="polypro786@gmail.com">Syed (PM – Syed/Mariam)</option>
+          <option value="t.alhabbal@gmail.com">Tamer Alhabbal (PM – own only)</option>
+        </optgroup>
       </select>
       <button onclick="doDemo()">Enter</button>
     </div>
@@ -570,13 +574,16 @@ const SP_USE_LIST = SP_LIST !== 'YOUR_APPLICATIONS_LIST_ID';
 
 // User roles — email must match Microsoft account username (lowercase)
 const USERS = {
-  'mariam.fatima@hotmail.com':      { name: 'Mariam Fatima',   role: 'admin' },
-  'umairlasi@gmail.com':            { name: 'Umair Lasi',      role: 'admin' },
-  'usattar@hotmail.com':            { name: 'Umair Lasi',      role: 'admin' }, // Umair's actual MS account
+  // ── Admins: full access + lease generation + PM filter with group pre-select ──
   'mariam@mfocorp.onmicrosoft.com': { name: 'Mariam Fatima',   role: 'admin' },
-  'mariamfatimacorp@gmail.com':     { name: 'Mariam Fatima',   role: 'admin' },
-  'polypro786@gmail.com':           { name: 'Syed',            role: 'pm' },
-  't.alhabbal@gmail.com':           { name: 'Tamer Alhabbal',  role: 'pm' },
+  'umairlasi@gmail.com':            { name: 'Umair Lasi',      role: 'admin' },
+  'usattar@hotmail.com':            { name: 'Umair Lasi',      role: 'admin' }, // Umair's real MS account
+
+  // ── PMs: limited access, filtered to own group, NO lease button ──────────────
+  'mariam.fatima@hotmail.com':      { name: 'Mariam Fatima',   role: 'pm' },   // Syed/Mariam group
+  'mariamfatimacorp@gmail.com':     { name: 'Mariam Fatima',   role: 'pm' },   // Syed/Mariam group
+  'polypro786@gmail.com':           { name: 'Syed',            role: 'pm' },   // Syed/Mariam group
+  't.alhabbal@gmail.com':           { name: 'Tamer Alhabbal',  role: 'pm' },   // own apps only
 };
 
 // PM display names — maps any email to its display name.
@@ -1297,9 +1304,8 @@ function selApp(id) {
   const anyFlag = a.crBankruptcy === 'Yes' || a.crEviction === 'Yes' || a.crLatePayments === 'Yes' || a.crRefused === 'Yes';
   const pmLabel = PM_NAMES[a.pmEmail] || a.propertyManager || '';
   const isAdmin  = currentUser?.role === 'admin';
-  // Only these two accounts may generate lease agreements
-  const canLease = ['mariam@mfocorp.onmicrosoft.com', 'umairlasi@gmail.com', 'usattar@hotmail.com']
-                     .includes(currentUser?.email);
+  // Only admins may generate lease agreements (PMs never see this button)
+  const canLease = isAdmin;
   const isPM    = currentUser?.role === 'pm';
   const sid = JSON.stringify(a.id);
 
@@ -2806,8 +2812,8 @@ function getLeaseData() {
 
 // ── DOCX GENERATION (template-based via content control fill) ────────────────
 async function doGenDOCX() {
-  if (!['mariam@mfocorp.onmicrosoft.com', 'umairlasi@gmail.com', 'usattar@hotmail.com'].includes(currentUser?.email)) {
-    toast('⚠ You do not have permission to generate lease agreements.');
+  if (currentUser?.role !== 'admin') {
+    toast('⚠ Only administrators can generate lease agreements.');
     return;
   }
   let d;
