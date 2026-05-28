@@ -546,7 +546,7 @@ const LEASE_TEMPLATE_PATH = 'Rental Applications/Lease Template.docx';
 const IS_DEMO    = false;
 const SP_READY   = true;
 // Bump this string whenever parseRentalAppText() changes so old cached data auto-reruns
-const PARSE_VERSION = '19';
+const PARSE_VERSION = '20';
 
 // ── PHONE FORMATTING ──────────────────────────────────────────────────────────
 // Normalises any phone string to "000-000-0000". Returns original if not 10-digit.
@@ -1924,8 +1924,9 @@ function parseRentalAppText(raw) {
   // This PDF uses numbered sections (1.) through (9.). Extracting each section
   // prevents fields from one section bleeding into another.
   const SEC = {};
-  const secPats = ['1\\.\\)', '2\\.\\)', '3\\.\\)', '4\\.\\)', '5\\.\\)',
-                   '6\\.\\)', '7\\.\\)', '8\\.\\)', '9\\.\\)'];
+  // Match "N.)" OR "N)" — the dot is optional so both PDF variants are handled
+  const secPats = ['1\\.?\\)', '2\\.?\\)', '3\\.?\\)', '4\\.?\\)', '5\\.?\\)',
+                   '6\\.?\\)', '7\\.?\\)', '8\\.?\\)', '9\\.?\\)'];
   for (let i = 0; i < secPats.length; i++) {
     const endStr = secPats.slice(i + 1).join('|') || 'ZZEND';
     const re = new RegExp(secPats[i] + '[\\s\\S]*?(?=' + endStr + '|$)', 'i');
@@ -1948,7 +1949,20 @@ function parseRentalAppText(raw) {
   // ── STEP 5: Pre-compute fields that need stripTrailing ────────────────────
   const sec1 = SEC[1] || t;   // Personal info          (PDF section 1)
   const sec3 = SEC[3] || t;   // Previous tenancy       (PDF section 3)
-  const sec4 = SEC[2] || t;   // Primary employment     (PDF section 2 — NOT 4)
+  // Primary employment = PDF section 2. If section-number detection failed (SEC[2] empty or tiny),
+  // fall back to finding the employment block by keyword heading, then the full text.
+  const sec4 = (() => {
+    if (SEC[2] && SEC[2].length > 80) return SEC[2];
+    // Try to carve out the employment block by its heading / first anchor keyword
+    const empIdx = t.search(/(?:^|\n)[^\n]*(?:Employment\s+Information|2[.)]\s*Employment|Current\s+Employer\s*:|Name\s+of\s+(?:Current\s+)?Employer\s*:)/im);
+    if (empIdx >= 0) {
+      const snippet = t.slice(empIdx);
+      // End at the next major section (References, Previous Rental, Co-Applicant, Credit, etc.)
+      const endIdx = snippet.search(/(?:^|\n)[^\n]*(?:References?\s*:|Previous\s+(?:Rental|Address|Tenancy)|Co[\s-]?Applicant|Credit\s+(?:Check|History)|Emergency\s+Contact|3[.)]|4[.)])/im);
+      return endIdx > 80 ? snippet.slice(0, endIdx) : snippet.slice(0, 1200);
+    }
+    return t; // last resort: search entire document
+  })();
   const sec5 = SEC[5] || '';  // Co-applicant employment (PDF section 5)
 
   // Emails: section 1 first, then section 2
@@ -2162,19 +2176,31 @@ function parseRentalAppText(raw) {
       return '';
     })(),
 
-    empEmployer: getIn(sec4, [
-      /Current\s+Employer\s*:\s*([^\n]{2,70})/i,
-      /(?:Name\s+of\s+)?Employer['']?s?\s+Name\s*:\s*([^\n]{2,70})/i,
-      /Name\s+of\s+(?:Current\s+)?Employer\s*:\s*([^\n]{2,70})/i,
-      /Employer['']?s?\s+(?:Name\s*)?:\s*([^\n]{2,70})/i,
-      /Company\s+Name\s*:\s*([^\n]{2,70})/i,
-    ]),
+    empEmployer: (() => {
+      const v = getIn(sec4, [
+        /Current\s+Employer\s*:\s*([^\n]{2,70})/i,
+        /(?:Name\s+of\s+)?Employer['''']?s?\s+Name\s*:\s*([^\n]{2,70})/i,
+        /Name\s+of\s+(?:Current\s+)?Employer\s*:\s*([^\n]{2,70})/i,
+        /Employer['''']?s?\s+(?:Name\s*)?:\s*([^\n]{2,70})/i,
+        /Company\s+Name\s*:\s*([^\n]{2,70})/i,
+        /Place\s+of\s+(?:Work|Employment)\s*:\s*([^\n]{2,70})/i,
+        /Employer\s*:\s*([^\n]{2,70})/i,
+        // value on next line (two-column split)
+        /(?:Current\s+)?Employer['''']?s?\s+Name\s*:\s*\n\s*([^\n]{2,70})/i,
+        /Name\s+of\s+(?:Current\s+)?Employer\s*:\s*\n\s*([^\n]{2,70})/i,
+      ]);
+      return v && !looksLikeLabel(v) ? v : '';
+    })(),
 
-    empAddress: getIn(sec4, [
-      /Current\s+Employer[^\n]+\nAddress\s*:\s*([^\n]{5,120})/i,
-      /(?:Address\s+of\s+|Employer['']?s?\s+)?(?:Employer|Business|Work|Company)\s+Address\s*:\s*([^\n]{5,120})/i,
-      /Work\s+Location\s*:\s*([^\n]{5,120})/i,
-    ]),
+    empAddress: (() => {
+      const v = getIn(sec4, [
+        /Current\s+Employer[^\n]+\nAddress\s*:\s*([^\n]{5,120})/i,
+        /(?:Address\s+of\s+|Employer['''']?s?\s+)?(?:Employer|Business|Work|Company)\s+Address\s*:\s*([^\n]{5,120})/i,
+        /Work\s+(?:Location|Address)\s*:\s*([^\n]{5,120})/i,
+        /(?:Employer|Business|Work)\s+Address\s*:\s*\n\s*([^\n]{5,120})/i,
+      ]);
+      return v && !looksLikeLabel(v) ? v : '';
+    })(),
 
     empPosition: (() => {
       const v = getIn(sec4, [
@@ -2183,7 +2209,9 @@ function parseRentalAppText(raw) {
         /(?:Job\s+)?Title\s*:\s*([^\n]{2,60})/i,
         /Position\s*:\s*([^\n]{2,60})/i,
         /Occupation\s*:\s*([^\n]{2,60})/i,
+        /Role\s*:\s*([^\n]{2,60})/i,
       ]);
+      if (!v || looksLikeLabel(v)) return '';
       return v.replace(/\s*(?:Monthly|Wage|Salary|Employment|Employ|\$)[\s\S]*$/i, '').trim();
     })(),
 
