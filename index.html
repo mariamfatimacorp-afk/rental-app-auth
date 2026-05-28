@@ -830,6 +830,17 @@ async function loadApplications() {
     toast('⚠ SharePoint error — see dashboard for details');
   }
   renderList();
+
+  // PM users: auto-extract all PDFs in the background so PM assignments are
+  // detected from the PDF itself, solving the cross-device localStorage problem.
+  // Each extraction calls renderList() when done, so apps appear progressively.
+  if (currentUser?.role === 'pm') {
+    (async () => {
+      for (const a of apps) {
+        await extractPdfData(a).catch(e => console.warn('bg pdf extract:', e));
+      }
+    })();
+  }
 }
 
 // Convert a SharePoint drive file (PDF) into an app object for the dashboard
@@ -1432,7 +1443,8 @@ function selApp(id) {
       ${!isAdmin && !isPM ? '<span style="font-size:11px;color:var(--mut);margin-left:6px">Admins control status</span>' : ''}
     </div>
 
-    <!-- ── Assign PM ── -->
+    <!-- ── Assign PM (admin only) ── -->
+    ${isAdmin ? `
     <div class="scard" style="margin-bottom:12px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">
       <span style="font-size:12px;font-weight:700;color:var(--txt);white-space:nowrap">Assign Property Manager:</span>
       <select id="pmAssignSelect" onchange='assignPM(${sid}, this.value)'
@@ -1443,7 +1455,7 @@ function selApp(id) {
         ).join('')}
       </select>
       <span style="font-size:11px;color:var(--mut)">Auto-assigned from PDF · override anytime</span>
-    </div>
+    </div>` : ''}
 
     <!-- ── PM / Admin: Landlord & Lease Details ── -->
     ${(isAdmin || isPM) ? `
@@ -1460,15 +1472,21 @@ function selApp(id) {
           ${frow('Landlord Phone', a.landlordPhone, '', 'landlordPhone')}
         </div>
         <div>
-          ${(isAdmin || isPM) ? (editMode
+          ${isAdmin ? (editMode
             ? `<div class="frow"><span class="flbl">Monthly Rent ($)</span><input class="ef-input" id="ef_monthlyRent" type="number" min="0" step="50" value="${Number(a.monthlyRent)||''}" placeholder="e.g. 2500"></div>`
-            : `<div class="frow"><span class="flbl">Monthly Rent</span><span class="fval" style="font-weight:700;color:var(--grn);font-size:15px">${rentAmt ? '$ ' + rentAmt.toLocaleString() : '<span style=\'color:var(--mut);font-weight:400;font-size:13px\'>— set in Edit</span>'}</span></div>`
+            : `<div class="frow"><span class="flbl">Monthly Rent</span><span class="fval" style="font-weight:700;color:var(--grn);font-size:15px">${rentAmt ? '$ ' + rentAmt.toLocaleString() : '<span style='color:var(--mut);font-weight:400;font-size:13px'>— set in Edit</span>'}</span></div>`
           ) : ''}
+          ${isPM ? `<div class="frow"><span class="flbl">Monthly Rent ($)</span>
+            <input class="ef-input" id="pm_rent" type="number" min="0" step="50" value="${Number(a.monthlyRent)||''}" placeholder="e.g. 2500" style="max-width:160px"></div>` : ''}
           ${farea('Utility Clause', a.utilityClause, 'utilityClause')}
         </div>
       </div>
-      ${farea('PM Notes', a.pmNotes, 'pmNotes')}
-      ${!editMode ? `<button class="btn btn-ylw" style="margin-top:8px;font-size:11px" onclick='toggleEdit(${sid})'>✏️ Edit ${isAdmin ? 'these fields' : 'Landlord / Lease details'}</button>` : ''}
+      ${isAdmin ? farea('PM Notes', a.pmNotes, 'pmNotes') : ''}
+      ${isPM ? `<div class="frow" style="margin-top:4px"><span class="flbl">PM Notes</span>
+        <textarea class="ef-input" id="pm_pmnotes" rows="2" style="resize:vertical">${(a.pmNotes||'').replace(/</g,'&lt;')}</textarea>
+      </div>
+      <button class="btn btn-grn" style="margin-top:8px;font-size:11px" onclick='savePmFields(${sid})'>&#128190; Save Rent &amp; Notes</button>` : ''}
+      ${!editMode && isAdmin ? `<button class="btn btn-ylw" style="margin-top:8px;font-size:11px" onclick='toggleEdit(${sid})'>&#9999;&#65039; Edit these fields</button>` : ''}
     </div>` : ''}
 
     <!-- ── Row 1: Property Details + Rental Profile ── -->
@@ -1526,7 +1544,7 @@ function selApp(id) {
     <div class="secgrid" style="margin-bottom:12px">
       <div class="scard">
         <h3><span class="icon">👥</span> Co-Applicant
-          ${!a.coName && !editMode ? '<span style="font-size:10px;font-weight:400;color:var(--mut);margin-left:6px">— not on file · click Edit to add</span>' : ''}
+          ${!a.coName && !editMode && isAdmin ? '<span style="font-size:10px;font-weight:400;color:var(--mut);margin-left:6px">— not on file · click Edit to add</span>' : ''}
         </h3>
         ${frow('Full Legal Name', a.coName, '', 'coName')}
         ${frow('Date of Birth', a.coDob, '', 'coDob')}
@@ -1805,6 +1823,8 @@ async function extractPdfData(app) {
         fields.pmName       = matched.name;
         app.pmEmail         = matched.email;
         app.propertyManager = matched.name;
+        // Patch SP so PM assignment is visible cross-device (best-effort)
+        if (app.spId) patchSP(app.spId, { App_PM: matched.email }).catch(() => {});
       }
     }
 
@@ -1813,9 +1833,9 @@ async function extractPdfData(app) {
     appMeta(app.id, fields);
     renderList(); // update sidebar card PM tag
 
-    // Re-render detail with full data
-    selApp(app.id);
-    toast('Application data loaded from PDF', 'ok');
+    // Re-render detail panel only if this app is currently open
+    if (String(selId) === String(app.id)) selApp(app.id);
+    else toast('Application data loaded from PDF', 'ok');
 
   } catch (e) {
     console.warn('PDF extraction error:', e);
@@ -2560,12 +2580,30 @@ async function saveNotes(id) {
   if (!a) return;
   const val = document.getElementById('notes_' + id).value;
   a.notes = val;
+  appMeta(a.id, { notes: val }); // always persist locally for cross-session access
   if (a.spId && SP_READY) {
     await patchSP(a.spId, { Notes: val });
     toast('Notes saved to SharePoint', 'ok');
   } else {
     toast('Notes saved locally', 'ok');
   }
+}
+
+// PM-only: save monthly rent + PM notes inline (no edit mode required for PMs)
+async function savePmFields(id) {
+  if (currentUser?.role !== 'pm') return;
+  const a = apps.find(x => String(x.id) === String(id));
+  if (!a) return;
+  const rentEl  = document.getElementById('pm_rent');
+  const notesEl = document.getElementById('pm_pmnotes');
+  const updates = {};
+  if (rentEl)  updates.monthlyRent = Number(rentEl.value) || 0;
+  if (notesEl) updates.pmNotes     = notesEl.value.trim();
+  Object.assign(a, updates);
+  appMeta(a.id, updates); // persist locally
+  if (a.spId) patchSP(a.spId, { App_MonthlyRent: updates.monthlyRent }).catch(() => {});
+  selApp(id); // re-render detail with saved values
+  toast('Saved', 'ok');
 }
 
 async function savePdfUrl(id) {
