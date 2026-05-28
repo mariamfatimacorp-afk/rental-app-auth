@@ -2632,7 +2632,8 @@ function openModal(id) {
       : new Date(oc);
     if (!isNaN(od)) {
       document.getElementById('f_start').value = od.toISOString().split('T')[0];
-      const ed = new Date(od); ed.setFullYear(ed.getFullYear() + 1);
+      // End = last day of the month before the anniversary month (e.g. Jun 20 → May 31 next year)
+      const ed = new Date(od.getFullYear() + 1, od.getMonth(), 0);
       document.getElementById('f_end').value = ed.toISOString().split('T')[0];
     }
   }
