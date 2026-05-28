@@ -686,7 +686,20 @@ function signIn(account) {
   document.getElementById('userName').textContent = profile.name;
   document.getElementById('userEmail').textContent = email;
   document.getElementById('userRole').textContent = profile.role === 'admin' ? 'Administrator' : 'Property Manager';
-  if (profile.role === 'admin') document.getElementById('pmFilterWrap').style.display = 'block';
+  if (profile.role === 'admin') {
+    document.getElementById('pmFilterWrap').style.display = 'block';
+    // If this admin is also part of a PM group (e.g. mariam.fatima@hotmail.com → Syed/Mariam),
+    // pre-select their group in the filter so they land on their own apps by default.
+    // They can always switch to "All Property Managers" to see everything.
+    const myGroup = PM_NAMES[email];
+    if (myGroup) {
+      const canonical = PM_OPTIONS.find(o => PM_NAMES[o.email] === myGroup);
+      if (canonical) {
+        const el = document.getElementById('pmFilter');
+        if (el) el.value = canonical.email;
+      }
+    }
+  }
   loadApplications();
 }
 
