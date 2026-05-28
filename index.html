@@ -781,14 +781,15 @@ async function getToken() {
   }
 }
 
-// ── SHARED METADATA (cross-device PM assignment + status sync) ────────────────
-// _crm_meta.json lives in the same SP folder as the PDFs.
-// Written by admins when they assign PMs / update status / save edits.
-// Read by all users (admins + PMs) on every load so assignments are visible
-// on any device without requiring localStorage or SP custom columns.
-const SP_META_FILE = '_crm_meta.json';
+// ── SHARED METADATA (cross-device sync + PM data access) ─────────────────────
+// _crm_meta.json is stored in a SEPARATE folder from the PDFs so that PMs
+// can be granted access to only this file — not the PDFs folder.
+// PMs never load PDFs directly; they load all app data from this JSON file.
+// Admins write it on every save (PM assign / status / edit / notes).
+const SP_META_FILE   = '_crm_meta.json';
+const SP_META_FOLDER = 'Rental Applications'; // one level up from the PDFs folder
 function spMetaUrl() {
-  return `https://graph.microsoft.com/v1.0/sites/${SP_SITE}/drive/root:/${encodeURIComponent(SP_FOLDER).replace(/%2F/g,'/')}/${SP_META_FILE}:/content`;
+  return `https://graph.microsoft.com/v1.0/sites/${SP_SITE}/drive/root:/${encodeURIComponent(SP_META_FOLDER).replace(/%2F/g,'/')}/${SP_META_FILE}:/content`;
 }
 async function loadSharedMeta(token) {
   if (!SP_READY || SP_USE_LIST) return {};
@@ -805,12 +806,25 @@ async function saveSharedMeta() {
     for (const a of apps) {
       const id = a.spId || a.id;
       if (!id) continue;
+      // Save ALL extracted fields so PMs can load full app data without
+      // needing access to the PDFs folder.
       const entry = {};
-      if (a.pmEmail)      entry.pmEmail      = a.pmEmail;
-      if (a.status && a.status !== 'new') entry.status = a.status;
-      if (a.notes)        entry.notes        = a.notes;
-      if (a.monthlyRent)  entry.monthlyRent  = a.monthlyRent;
-      if (a.pmNotes)      entry.pmNotes      = a.pmNotes;
+      const fields = [
+        'name','email','phone1','phone2','dob','sin',
+        'propertyAddress','currentAddress','desiredOccupancy','maxOccupants','adults','children',
+        'monthlyRent','landlordName','landlordAddress','landlordEmail','landlordPhone','utilityClause',
+        'coName','coSIN','coEmail','coPhone1','coPhone2','coCurrentAddress','coDob',
+        'prevLandlordName','prevLandlordPhone','prevAddress','prevStay','prevRent','prevReason',
+        'empStatus','empEmployer','empAddress','empSupervisor','empSupPhone','empLength','empWage','empPosition','empOther',
+        'coEmpEmployer','coEmpAddress','coEmpSupervisor','coEmpSupPhone','coEmpLength','coEmpWage','coEmpPosition',
+        'crBankruptcy','crEviction','crLatePayments','crRefused','crExplanation',
+        'hasPets','petDesc','smokes','hasInsurance','jointCreditConsent',
+        'ackNoPetsPermission','ackPetDeposit','ackInfoTrue','ackAuthorizeObtain','ackAuthorizeDisclose',
+        'ref1Name','ref1Rel','ref1Phone','ref2Name','ref2Rel','ref2Phone','ref3Name','ref3Rel','ref3Phone',
+        'emgName','emgAddress','emgPhone','emgRel',
+        'pmEmail','status','notes','pmNotes','submittedAt','pdfUrl','propertyManager',
+      ];
+      fields.forEach(k => { if (a[k] !== undefined && a[k] !== '' && a[k] !== 0) entry[k] = a[k]; });
       if (Object.keys(entry).length) meta[id] = entry;
     }
     const token = await getToken();
@@ -822,12 +836,54 @@ async function saveSharedMeta() {
   } catch(e) { console.warn('saveSharedMeta failed:', e); }
 }
 
+// Build an app object from a _crm_meta.json entry (used for PM-only load path)
+function metaToApp(id, data) {
+  return {
+    id, spId: id,
+    status: 'new', pmEmail: '', notes: '', pmNotes: '', monthlyRent: 0,
+    pdfParsed: true, parseVersion: PARSE_VERSION, pdfAnnFields: '',
+    ...data,
+    id, spId: id, // always restore id after spread
+  };
+}
+
 // ── SHAREPOINT ────────────────────────────────────────────────────────────────
 async function loadApplications() {
   if (!SP_READY) { renderList(); return; }
-  apps = []; // always clear before loading so mock/stale data never shows
-  renderList(); // show empty state while loading
-  toast('Loading applications from SharePoint…');
+  apps = [];
+  renderList();
+  toast('Loading applications…');
+
+  // ── PM LOAD PATH ─────────────────────────────────────────────────────────────
+  // PMs never access the PDFs folder (security: they should not see other PMs'
+  // raw files). All app data is loaded from _crm_meta.json which only admins
+  // can write to and which lives in a separate folder PMs can access read-only.
+  if (currentUser?.role === 'pm') {
+    try {
+      const token = await getToken();
+      const sharedMeta = await loadSharedMeta(token);
+      apps = Object.entries(sharedMeta).map(([id, data]) => metaToApp(id, data));
+      if (!apps.length) {
+        const panel = document.getElementById('alist');
+        if (panel) panel.innerHTML = `<div style="padding:20px;color:var(--mut);font-size:13px">
+          No applications available yet. Your administrator needs to log in first to publish the data.
+        </div>`;
+        toast('No applications found — waiting for admin sync', '');
+      } else {
+        toast('Applications loaded (' + apps.length + ')', 'ok');
+      }
+    } catch(e) {
+      console.warn('PM meta load error:', e);
+      const panel = document.getElementById('alist');
+      if (panel) panel.innerHTML = `<div style="padding:20px;color:#c0392b;font-size:13px">
+        Could not load application data. Please try again or contact your administrator.
+      </div>`;
+    }
+    renderList();
+    return; // PMs never fall through to the SP PDF path below
+  }
+
+  // ── ADMIN LOAD PATH ───────────────────────────────────────────────────────────
   try {
     const token = await getToken();
 
@@ -895,23 +951,9 @@ async function loadApplications() {
   }
   renderList();
 
-  // Admin: auto-sync localStorage PM assignments to shared JSON so all users
-  // (PMs on other devices, other admins) see assignments cross-device.
-  // This fires every login so _crm_meta.json is always up to date.
-  if (currentUser?.role === 'admin') {
-    saveSharedMeta().catch(e => console.warn('meta auto-sync:', e));
-  }
-
-  // PM users: auto-extract all PDFs in the background so PM assignments are
-  // detected from the PDF itself, solving the cross-device localStorage problem.
-  // Each extraction calls renderList() when done, so apps appear progressively.
-  if (currentUser?.role === 'pm') {
-    (async () => {
-      for (const a of apps) {
-        await extractPdfData(a).catch(e => console.warn('bg pdf extract:', e));
-      }
-    })();
-  }
+  // Admin: auto-sync all app data to _crm_meta.json so PMs can load it
+  // without needing access to the PDFs folder.
+  saveSharedMeta().catch(e => console.warn('meta auto-sync:', e));
 }
 
 // Convert a SharePoint drive file (PDF) into an app object for the dashboard
