@@ -541,7 +541,7 @@ const LEASE_TEMPLATE_PATH = 'Rental Applications/Lease Template.docx';
 const IS_DEMO    = false;
 const SP_READY   = true;
 // Bump this string whenever parseRentalAppText() changes so old cached data auto-reruns
-const PARSE_VERSION = '18';
+const PARSE_VERSION = '19';
 
 // ── PHONE FORMATTING ──────────────────────────────────────────────────────────
 // Normalises any phone string to "000-000-0000". Returns original if not 10-digit.
@@ -2433,12 +2433,18 @@ function parseRentalAppText(raw) {
     })(),
     emgRel: (() => {
       const sec9 = SEC[9] || '';
+      // Guard: relationship is a short personal word (Mother, Friend, etc.)
+      // Reject if it contains legal/acknowledgment language, label colons, or is too long
+      const okRel = v => v && v.length <= 30
+        && !looksLikeLabel(v)
+        && !/applicant|acknowledge|tenant|co\s*-|landlord/i.test(v)
+        && !/:/.test(v);    // colons mean we captured a label:value pair, not a relationship
       for (const p of [
-        /Relationship\s*(?:to\s+(?:Applicant|Tenant))?\s*:\s*([^\n]{2,40})/i,
-        /Relationship\s*:\s*\n\s*([^\n]{2,30})/i,
+        /Relationship\s*(?:to\s+(?:Applicant|Tenant))?\s*:\s*([^\n]{2,30})/i,
+        /Relationship\s*:\s*\n\s*([^\n]{2,25})/i,
       ]) {
         const raw = getIn(sec9, [p]);
-        if (raw && !looksLikeLabel(raw)) return raw;
+        if (okRel(raw)) return raw;
       }
       return '';
     })(),
@@ -2459,12 +2465,15 @@ function parseRentalAppText(raw) {
     })(),
     emgAddress: (() => {
       const sec9 = SEC[9] || '';
+      // Guard: a real address should not contain label-like sub-patterns
+      const okAddr = v => v && !looksLikeLabel(v)
+        && !/(?:Phone|Relationship|Email|Name\s+of)\s*:/i.test(v);
       for (const p of [
         /Address\s*:\s*([^\n]{5,120})/i,
         /Address\s*:\s*\n\s*([^\n]{5,120})/i,
       ]) {
         const raw = getIn(sec9, [p]);
-        if (raw && !looksLikeLabel(raw)) return raw;
+        if (okAddr(raw)) return raw;
       }
       return '';
     })(),
