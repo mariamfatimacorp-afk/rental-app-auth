@@ -775,6 +775,47 @@ async function getToken() {
   }
 }
 
+// ── SHARED METADATA (cross-device PM assignment + status sync) ────────────────
+// _crm_meta.json lives in the same SP folder as the PDFs.
+// Written by admins when they assign PMs / update status / save edits.
+// Read by all users (admins + PMs) on every load so assignments are visible
+// on any device without requiring localStorage or SP custom columns.
+const SP_META_FILE = '_crm_meta.json';
+function spMetaUrl() {
+  return `https://graph.microsoft.com/v1.0/sites/${SP_SITE}/drive/root:/${encodeURIComponent(SP_FOLDER).replace(/%2F/g,'/')}/${SP_META_FILE}:/content`;
+}
+async function loadSharedMeta(token) {
+  if (!SP_READY || SP_USE_LIST) return {};
+  try {
+    const res = await fetch(spMetaUrl(), { headers: { Authorization: `Bearer ${token}` } });
+    if (res.ok) return await res.json();
+  } catch(e) {}
+  return {};
+}
+async function saveSharedMeta() {
+  if (!SP_READY || SP_USE_LIST || currentUser?.role !== 'admin') return;
+  try {
+    const meta = {};
+    for (const a of apps) {
+      const id = a.spId || a.id;
+      if (!id) continue;
+      const entry = {};
+      if (a.pmEmail)      entry.pmEmail      = a.pmEmail;
+      if (a.status && a.status !== 'new') entry.status = a.status;
+      if (a.notes)        entry.notes        = a.notes;
+      if (a.monthlyRent)  entry.monthlyRent  = a.monthlyRent;
+      if (a.pmNotes)      entry.pmNotes      = a.pmNotes;
+      if (Object.keys(entry).length) meta[id] = entry;
+    }
+    const token = await getToken();
+    await fetch(spMetaUrl(), {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(meta, null, 2)
+    }).then(r => { if (!r.ok) console.warn('saveSharedMeta', r.status); });
+  } catch(e) { console.warn('saveSharedMeta failed:', e); }
+}
+
 // ── SHAREPOINT ────────────────────────────────────────────────────────────────
 async function loadApplications() {
   if (!SP_READY) { renderList(); return; }
@@ -812,6 +853,23 @@ async function loadApplications() {
         .filter(f => f.name.toLowerCase().endsWith('.pdf'))
         .sort((a, b) => new Date(b.createdDateTime) - new Date(a.createdDateTime));
       apps = pdfs.length ? pdfs.map(fileToDraftApp) : [];
+
+      // Apply shared metadata (PM assignments, status, notes) so any device
+      // sees what the admin saved — localStorage values take precedence for
+      // PDF-parsed data; sharedMeta wins for admin-set fields.
+      const sharedMeta = await loadSharedMeta(token);
+      if (Object.keys(sharedMeta).length) {
+        apps.forEach(a => {
+          const m = sharedMeta[a.spId || a.id];
+          if (m) {
+            if (m.pmEmail)     a.pmEmail     = m.pmEmail;
+            if (m.status)      a.status      = m.status;
+            if (m.notes)       a.notes       = m.notes;
+            if (m.monthlyRent) a.monthlyRent = m.monthlyRent;
+            if (m.pmNotes)     a.pmNotes     = m.pmNotes;
+          }
+        });
+      }
     }
 
     toast('Applications loaded (' + apps.length + ')', 'ok');
@@ -2559,6 +2617,7 @@ async function setStatus(id, s) {
   a.status = s;
   appMeta(a.id, { status: s }); // persist locally
   if (a.spId) patchSP(a.spId, { App_Status: s }).catch(() => {}); // best-effort SP sync
+  saveSharedMeta().catch(() => {}); // sync to shared JSON for cross-device visibility
   renderList();
   selApp(id);
   toast(s === 'approved' ? 'Application approved' : 'Marked as ' + s, s === 'approved' ? 'ok' : '');
@@ -2571,6 +2630,7 @@ async function assignPM(id, pmEmail) {
   a.propertyManager = PM_NAMES[pmEmail] || '';
   appMeta(a.id, { pmEmail, pmName: PM_NAMES[pmEmail] || '' }); // persist locally
   if (a.spId) patchSP(a.spId, { App_PM: pmEmail }).catch(() => {}); // best-effort SP sync
+  saveSharedMeta().catch(() => {}); // sync to shared JSON — THIS is how PMs see assignments cross-device
   renderList();
   toast(pmEmail ? `Assigned to ${PM_NAMES[pmEmail] || pmEmail}` : 'PM unassigned', 'ok');
 }
@@ -2581,6 +2641,7 @@ async function saveNotes(id) {
   const val = document.getElementById('notes_' + id).value;
   a.notes = val;
   appMeta(a.id, { notes: val }); // always persist locally for cross-session access
+  saveSharedMeta().catch(() => {}); // sync notes to shared JSON
   if (a.spId && SP_READY) {
     await patchSP(a.spId, { Notes: val });
     toast('Notes saved to SharePoint', 'ok');
@@ -2654,6 +2715,7 @@ function saveEdit(id) {
   });
   Object.assign(a, updates);
   appMeta(a.id, updates);
+  saveSharedMeta().catch(() => {}); // sync edits (rent, notes, etc.) to shared JSON
   editMode = false;
   renderList(); // update sidebar card in case name/PM changed
   selApp(id);
