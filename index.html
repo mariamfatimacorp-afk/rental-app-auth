@@ -541,7 +541,7 @@ const LEASE_TEMPLATE_PATH = 'Rental Applications/Lease Template.docx';
 const IS_DEMO    = false;
 const SP_READY   = true;
 // Bump this string whenever parseRentalAppText() changes so old cached data auto-reruns
-const PARSE_VERSION = '17';
+const PARSE_VERSION = '18';
 
 // ── PHONE FORMATTING ──────────────────────────────────────────────────────────
 // Normalises any phone string to "000-000-0000". Returns original if not 10-digit.
@@ -1891,8 +1891,8 @@ function parseRentalAppText(raw) {
   //  "Full Legal Name: Social Insurance Number (optional)")
   function looksLikeLabel(s) {
     if (!s || s.length < 2) return false;
-    return /^(?:Social\s+Insurance\s+Number|S\.?I\.?N\.?\s*[\(\(]|E\s*[-–]\s*mail\b|Supervisor['''’]?s?\s+(?:Name|Phone)|Name\s+of\s+Employer|Employer['''’]?s?\s+(?:Name|Address)|(?:Business|Work|Company|Employer|Current|Present|Mailing|Previous)\s+Address|Full\s+(?:Legal\s+)?Name|Date\s+of\s+Birth|Length\s+of\s+Employment|Monthly\s+(?:Gross\s+)?(?:Income|Wage|Salary)|Position\s*(?:\/\s*Title)?|Phone\s*(?:Number|[12]|Cell|Home|Alt)?$|Other\s+(?:Sources?\s+of\s+)?Income|Emergency\s+Contact|Relationship\b|Previous\s+(?:Rental\s+)?Address|Landlord['''’]?s?\s+(?:Name|Phone)|Reason\s+for\s+Leaving)\b/i.test(s.trim())
-        || /^Address\s*$|^Name\s*$/i.test(s.trim()); // single-word label catches
+    return /^(?:Social\s+Insurance\s+Number|S\.?I\.?N\.?\s*[\(\(]|E\s*[-–]\s*mail\b|Supervisor[‘’’’]?s?\s+(?:Name|Phone)|Name\s+of\s+Employer|Employer[‘’’’]?s?\s+(?:Name|Address)|(?:Business|Work|Company|Employer|Current|Present|Mailing|Previous)\s+Address|Full\s+(?:Legal\s+)?Name|Date\s+of\s+Birth|Length\s+of\s+Employment|Monthly\s+(?:Gross\s+)?(?:Income|Wage|Salary)|Position\s*(?:\/\s*Title)?|Phone\s*(?:Number|No\.?|[12]|Cell|Home|Alt)?$|Tel\s*(?:No\.?)?$|Other\s+(?:Sources?\s+of\s+)?Income|Emergency\s+Contact|Relationship\b|Previous\s+(?:Rental\s+)?Address|Landlord[‘’’’]?s?\s+(?:Name|Phone)|Reason\s+for\s+Leaving|Name\s+of\s+(?:a\s+)?[Pp]erson\s+not\s+residing|Next\s+of\s+Kin)\b/i.test(s.trim())
+        || /^Address\s*[:\s]*$|^Name\s*[:\s]*$|^Phone\s*[:\s]*$/i.test(s.trim()); // single-word label catches
   }
 
   // ── STEP 3: Section extraction ────────────────────────────────────────────
@@ -2400,23 +2400,74 @@ function parseRentalAppText(raw) {
     ref3Phone: sec8phones[2] || '',
 
     // ── Emergency Contact (Section 9) ─────────────────────────────────────
-    // "Name of a person not residing with you: Hamed Omar" — value on SAME line as label
-    emgName: getIn(SEC[9], [
-      /Name\s+of\s+a\s+person\s+not\s+residing[^\n]*?:\s*([^\n]{2,60})/i,
-      /Emergency\s+(?:Contact\s+)?(?:Person\s+)?(?:Name\s*)?:\s*([^\n]{2,60})/i,
-      /Next\s+of\s+Kin\s*(?:Name)?\s*:\s*([^\n]{2,60})/i,
-    ]),
-    emgRel: getIn(SEC[9], [
-      /Relationship\s*(?:to\s+(?:Applicant|Tenant))?\s*:\s*([^\n]{2,40})/i,
-    ]),
-    emgPhone: getIn(SEC[9], [
-      /Phone\s*(?:No\.?)?\s*:\s*([0-9()\s.\-]{7,20})/i,
-      /Tel\s*(?:No\.?)?\s*:\s*([0-9()\s.\-]{7,20})/i,
-      /Cell\s*(?:No\.?)?\s*:\s*([0-9()\s.\-]{7,20})/i,
-    ]),
-    emgAddress: getIn(SEC[9], [
-      /Address\s*:\s*([^\n]{5,120})/i,
-    ]),
+    // Two-column PDFs often merge label+label on same line, e.g.:
+    //   "Name of a person not residing with you: Relationship:"
+    // Use looksLikeLabel() to reject captured label text, then try next-line.
+    emgName: (() => {
+      const sec9 = SEC[9] || '';
+      // Helper: strip trailing right-column label artifacts (e.g. " Relationship: Friend")
+      const cleanEmgName = v => v
+        .replace(/\s+(?:Relationship|Phone\s*(?:No\.?)?|Address|Tel|Cell)\s*[:\s].*$/i, '')
+        .trim();
+      // Same-line patterns
+      for (const p of [
+        /Name\s+of\s+a\s+person\s+not\s+residing[^\n]*?:\s*([^\n]{2,80})/i,
+        /Emergency\s+(?:Contact\s+)?(?:Person\s+)?(?:Name\s*)?:\s*([^\n]{2,80})/i,
+        /Next\s+of\s+Kin\s*(?:Name)?\s*:\s*([^\n]{2,80})/i,
+      ]) {
+        const raw = getIn(sec9, [p]);
+        if (raw && !looksLikeLabel(raw)) {
+          const cleaned = cleanEmgName(raw);
+          if (cleaned && !looksLikeLabel(cleaned)) return cleaned;
+        }
+      }
+      // Next-line fallback
+      for (const p of [
+        /Name\s+of\s+a\s+person\s+not\s+residing[^\n]*:\s*\n\s*([^\n]{2,60})/i,
+        /Next\s+of\s+Kin[^\n]*:\s*\n\s*([^\n]{2,60})/i,
+      ]) {
+        const m = sec9.match(p);
+        if (m) { const v = m[1].trim(); if (v && !looksLikeLabel(v)) return v; }
+      }
+      return '';
+    })(),
+    emgRel: (() => {
+      const sec9 = SEC[9] || '';
+      for (const p of [
+        /Relationship\s*(?:to\s+(?:Applicant|Tenant))?\s*:\s*([^\n]{2,40})/i,
+        /Relationship\s*:\s*\n\s*([^\n]{2,30})/i,
+      ]) {
+        const raw = getIn(sec9, [p]);
+        if (raw && !looksLikeLabel(raw)) return raw;
+      }
+      return '';
+    })(),
+    emgPhone: (() => {
+      const sec9 = SEC[9] || '';
+      for (const p of [
+        /Phone\s*(?:No\.?)?\s*:\s*([0-9()\s.\-]{7,20})/i,
+        /Tel\s*(?:No\.?)?\s*:\s*([0-9()\s.\-]{7,20})/i,
+        /Cell\s*(?:No\.?)?\s*:\s*([0-9()\s.\-]{7,20})/i,
+        // Next-line fallbacks
+        /Phone\s*(?:No\.?)?\s*:\s*\n\s*([0-9()\s.\-]{7,20})/i,
+        /Tel\s*(?:No\.?)?\s*:\s*\n\s*([0-9()\s.\-]{7,20})/i,
+      ]) {
+        const raw = getIn(sec9, [p]);
+        if (raw) return raw;
+      }
+      return '';
+    })(),
+    emgAddress: (() => {
+      const sec9 = SEC[9] || '';
+      for (const p of [
+        /Address\s*:\s*([^\n]{5,120})/i,
+        /Address\s*:\s*\n\s*([^\n]{5,120})/i,
+      ]) {
+        const raw = getIn(sec9, [p]);
+        if (raw && !looksLikeLabel(raw)) return raw;
+      }
+      return '';
+    })(),
   };
 }
 
