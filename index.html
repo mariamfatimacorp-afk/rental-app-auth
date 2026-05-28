@@ -2773,23 +2773,43 @@ async function doGenDOCX() {
 }
 
 // ── TEMPLATE-BASED LEASE GENERATION (Word content controls) ──────────────────
-// Fetches Lease Template.docx from SharePoint, replaces the 21 Word content
-// controls with application data in document order, then downloads the filled DOCX.
+// Loads Lease Template.docx (same-origin GitHub Pages first, SharePoint fallback),
+// replaces the 21 Word content controls with application data, downloads filled DOCX.
 async function generateLeaseFromTemplate(d) {
-  toast('Loading lease template from SharePoint…');
-  const token = await getToken();
-  const encodedPath = LEASE_TEMPLATE_PATH.split('/').map(encodeURIComponent).join('/');
-  const res = await fetch(
-    `https://graph.microsoft.com/v1.0/sites/${SP_SITE}/drive/root:/${encodedPath}:/content`,
-    { headers: { Authorization: `Bearer ${token}` } }
-  );
-  if (!res.ok) throw new Error(
-    `Template fetch failed: HTTP ${res.status}.\n` +
-    `Upload "Lease Template.docx" to SharePoint → Documents/${LEASE_TEMPLATE_PATH}`
-  );
-
-  const arrayBuf = await res.arrayBuffer();
   if (typeof PizZip === 'undefined') throw new Error('PizZip library not loaded yet — try again in a moment.');
+
+  toast('Loading lease template…');
+  let arrayBuf;
+
+  // 1. Try GitHub Pages / same-origin first (no auth, fastest, works when DOCX is in the repo)
+  try {
+    const baseUrl = location.href.replace(/[?#].*$/, '').replace(/[^\/]*$/, '');
+    const r = await fetch(baseUrl + 'Lease%20Template.docx');
+    if (r.ok) arrayBuf = await r.arrayBuffer();
+  } catch(_) {}
+
+  // 2. Fallback: SharePoint (requires a valid token)
+  if (!arrayBuf) {
+    toast('Loading template from SharePoint…');
+    const token = await getToken();
+    if (token) {
+      try {
+        const encodedPath = LEASE_TEMPLATE_PATH.split('/').map(encodeURIComponent).join('/');
+        const res = await fetch(
+          `https://graph.microsoft.com/v1.0/sites/${SP_SITE}/drive/root:/${encodedPath}:/content`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        if (res.ok) arrayBuf = await res.arrayBuffer();
+        else console.warn('SP template fetch:', res.status);
+      } catch(e) { console.warn('SP template fetch error:', e); }
+    }
+  }
+
+  if (!arrayBuf) throw new Error(
+    'Could not load "Lease Template.docx".\n' +
+    'Make sure it is committed to the GitHub repo alongside index.html, ' +
+    `or upload it to SharePoint → Documents/${LEASE_TEMPLATE_PATH}`
+  );
 
   const zip = new PizZip(arrayBuf);
   let docXml = zip.file('word/document.xml').asText();
@@ -2815,7 +2835,7 @@ async function generateLeaseFromTemplate(d) {
   document.body.appendChild(a); a.click(); a.remove();
   URL.revokeObjectURL(url);
   closeModal();
-  toast('Lease generated from template ✓', 'ok');
+  toast('Lease generated ✓', 'ok');
 }
 
 // Fills Word content controls in docx XML by matching placeholder text in document order.
@@ -2859,7 +2879,9 @@ function fillDocxContentControls(xmlString, replacements) {
       /(<w:sdtContent\b[^>]*>)([\s\S]*?)(<\/w:sdtContent>)/,
       (_, open, inner, close) => {
         let first = true;
-        const newInner = inner.replace(/<w:t(?:\s[^>]*)?>[\s\S]*?<\/w:t>/g, () => {
+        // Strip yellow highlight from all runs in sdtContent so filled text looks clean
+        let newInner = inner.replace(/<w:highlight\s+w:val="yellow"\s*\/>/g, '');
+        newInner = newInner.replace(/<w:t(?:\s[^>]*)?>[\s\S]*?<\/w:t>/g, () => {
           if (first) { first = false; return `<w:t${spaceAttr}>${safe}</w:t>`; }
           return '<w:t></w:t>';
         });
