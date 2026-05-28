@@ -212,7 +212,7 @@ textarea.notes:focus{outline:none;border-color:var(--acc)}
         <option value="mariam@mfocorp.onmicrosoft.com">Mariam Corp (Admin)</option>
         <option value="mariamfatimacorp@gmail.com">Mariam Alt (Admin)</option>
         <option value="polypro786@gmail.com">PM 1 (Property Manager)</option>
-        <option value="t.alhabbal@gmail.com">PM 2 (Property Manager)</option>
+        <option value="t.habbal@gmail.com">PM 2 (Property Manager)</option>
       </select>
       <button onclick="doDemo()">Enter</button>
     </div>
@@ -264,7 +264,7 @@ textarea.notes:focus{outline:none;border-color:var(--acc)}
           <select id="pmFilter" onchange="renderList()">
             <option value="">All Property Managers</option>
             <option value="umairlasi@gmail.com">Umair Lasi</option>
-            <option value="t.alhabbal@gmail.com">Tamer Alhabbal</option>
+            <option value="t.habbal@gmail.com">Tamer Alhabbal</option>
             <option value="polypro786@gmail.com">Syed / Mariam</option>
           </select>
         </div>
@@ -574,14 +574,14 @@ const USERS = {
   'mariam@mfocorp.onmicrosoft.com': { name: 'Mariam Fatima',   role: 'admin' },
   'mariamfatimacorp@gmail.com':     { name: 'Mariam Fatima',   role: 'admin' },
   'polypro786@gmail.com':           { name: 'Syed',            role: 'pm' },
-  't.alhabbal@gmail.com':           { name: 'Tamer Alhabbal',  role: 'pm' },
+  't.habbal@gmail.com':           { name: 'Tamer Alhabbal',  role: 'pm' },
 };
 
 // PM display names — maps any email to its display name.
 // Syed and Mariam work as one unit so both their emails show "Syed / Mariam".
 const PM_NAMES = {
   'umairlasi@gmail.com':            'Umair Lasi',
-  't.alhabbal@gmail.com':           'Tamer Alhabbal',
+  't.habbal@gmail.com':           'Tamer Alhabbal',
   'polypro786@gmail.com':           'Syed / Mariam',
   'mariam.fatima@hotmail.com':      'Syed / Mariam',
   'mariam@mfocorp.onmicrosoft.com': 'Syed / Mariam',
@@ -592,7 +592,7 @@ const PM_NAMES = {
 // Syed/Mariam share one slot; polypro786 is stored as the canonical email.
 const PM_OPTIONS = [
   { email: 'umairlasi@gmail.com',  name: 'Umair Lasi' },
-  { email: 't.alhabbal@gmail.com', name: 'Tamer Alhabbal' },
+  { email: 't.habbal@gmail.com', name: 'Tamer Alhabbal' },
   { email: 'polypro786@gmail.com', name: 'Syed / Mariam' },
 ];
 
@@ -985,7 +985,7 @@ let apps = [
   },
   {
     id: 2, spId: null,
-    submittedAt: "2026-05-12", status: "reviewed", pmEmail: "t.alhabbal@gmail.com", pdfUrl: "",
+    submittedAt: "2026-05-12", status: "reviewed", pmEmail: "t.habbal@gmail.com", pdfUrl: "",
     notes: "Income adequate. Waiting on employment verification from AHS. One late payment flag — needs explanation. References not yet contacted.",
     propertyAddress: "339 Coral Reef Manor NE", propertyManager: "PM 2",
     desiredOccupancy: "2026-06-01", maxOccupants: 2, adults: 2, children: "",
@@ -1037,7 +1037,7 @@ let apps = [
   },
   {
     id: 4, spId: null,
-    submittedAt: "2026-05-19", status: "new", pmEmail: "t.alhabbal@gmail.com", pdfUrl: "",
+    submittedAt: "2026-05-19", status: "new", pmEmail: "t.habbal@gmail.com", pdfUrl: "",
     notes: "", propertyAddress: "339 Coral Reef Manor NE", propertyManager: "PM 2",
     desiredOccupancy: "2026-07-01", maxOccupants: 1, adults: 1, children: "",
     name: "Jennifer Kim", currentAddress: "200 Cranston Road SE, Calgary, AB",
@@ -1667,7 +1667,7 @@ function matchPmByName(rawName) {
       words: ['umair', 'lasi', 'omer', 'omar', 'lassi'],
     },
     {
-      email: 't.alhabbal@gmail.com',
+      email: 't.habbal@gmail.com',
       name:  'Tamer Alhabbal',
       // Matches: "tamer", "tamir", "alhabbal", "alabal", "habbal"
       words: ['tamer', 'tamir', 'alhabbal', 'alabal', 'habbal', 'al habbal'],
