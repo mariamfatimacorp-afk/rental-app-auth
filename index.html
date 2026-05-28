@@ -651,6 +651,12 @@ async function init() {
     console.error('MSAL init error:', e);
     const code = e.errorCode || '';
     const msg  = e.message  || '';
+    // AADSTS50020 = account not in this directory → user needs to be added as a guest
+    if (msg.includes('AADSTS50020') || msg.includes('does not exist in tenant') || msg.includes('guest')) {
+      try { msalApp.clearCache(); } catch(_) {}
+      showLoginError('Your account has not been added to this system yet. Please ask your administrator to invite you as a guest in Azure AD.');
+      return;
+    }
     // interaction_required / block_iframe_reload / AADSTS160021 = stale session, not a real error.
     // Clear the bad cache state and drop back to the login screen quietly.
     if (code === 'interaction_required' || code === 'login_required' ||
@@ -3704,10 +3710,11 @@ window.addEventListener('load', function () {
       msalApp = new msal.PublicClientApplication({
         auth: {
           clientId:    CLIENT_ID,
-          // 'common' allows both organisational accounts (mfocorp) AND personal
-          // Microsoft accounts (e.g. umairlasi@gmail.com linked to a MS identity).
-          // The USERS whitelist below still controls who can actually access the app.
-          authority:   'https://login.microsoftonline.com/common',
+          // Use the org-specific tenant so ALL users (org accounts + B2B guests)
+          // receive a tenant-scoped token that SharePoint will accept.
+          // /common issued consumer MSA tokens which SharePoint rejects with 400/404.
+          // Guests (hotmail, gmail) must first be invited in Azure AD Entra.
+          authority:   'https://login.microsoftonline.com/' + TENANT_ID,
           redirectUri: REDIRECT_URI
         },
         cache: { cacheLocation: 'localStorage', storeAuthStateInCookie: true }
