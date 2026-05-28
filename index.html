@@ -239,6 +239,7 @@ textarea.notes:focus{outline:none;border-color:var(--acc)}
         <span class="huser-email" id="userEmail"></span>
         <span class="huser-role" id="userRole"></span>
       </div>
+      <button id="syncMetaBtn" onclick="forceSyncMeta()" style="display:none;background:rgba(255,255,255,.10);margin-right:4px;font-size:11px" title="Push all app data to shared cloud file so PMs can see it">☁ Sync to PMs</button>
       <button class="btn-signout" onclick="doSwitchAccount()" style="background:rgba(255,255,255,.10);margin-right:4px" title="Sign in with a different Microsoft account">⇄ Switch Account</button>
       <button class="btn-signout" onclick="doLogout()">Sign Out</button>
     </div>
@@ -701,6 +702,7 @@ function signIn(account) {
   document.getElementById('userRole').textContent = profile.role === 'admin' ? 'Administrator' : 'Property Manager';
   if (profile.role === 'admin') {
     document.getElementById('pmFilterWrap').style.display = 'block';
+    document.getElementById('syncMetaBtn').style.display = 'inline-block';
     // If this admin is also part of a PM group (e.g. mariam.fatima@hotmail.com → Syed/Mariam),
     // pre-select their group in the filter so they land on their own apps by default.
     // They can always switch to "All Property Managers" to see everything.
@@ -828,12 +830,27 @@ async function saveSharedMeta() {
       if (Object.keys(entry).length) meta[id] = entry;
     }
     const token = await getToken();
-    await fetch(spMetaUrl(), {
+    if (!token) { toast('⚠ Could not sync — token expired, please refresh', ''); return; }
+    const r = await fetch(spMetaUrl(), {
       method: 'PUT',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify(meta, null, 2)
-    }).then(r => { if (!r.ok) console.warn('saveSharedMeta', r.status); });
-  } catch(e) { console.warn('saveSharedMeta failed:', e); }
+    });
+    if (!r.ok) {
+      console.warn('saveSharedMeta HTTP', r.status);
+      toast('⚠ Cloud sync failed (' + r.status + ') — PMs may not see latest data', '');
+    }
+  } catch(e) {
+    console.warn('saveSharedMeta failed:', e);
+    toast('⚠ Cloud sync error — PMs may not see latest data', '');
+  }
+}
+
+// Admin can call this manually to force-push all current app data to _crm_meta.json
+async function forceSyncMeta() {
+  toast('Syncing to cloud…');
+  await saveSharedMeta();
+  toast('✓ Synced — PMs will see updated data on next refresh', 'ok');
 }
 
 // Build an app object from a _crm_meta.json entry (used for PM-only load path)
@@ -862,15 +879,19 @@ async function loadApplications() {
     try {
       const token = await getToken();
       const sharedMeta = await loadSharedMeta(token);
+      const totalInMeta = Object.keys(sharedMeta).length;
       apps = Object.entries(sharedMeta).map(([id, data]) => metaToApp(id, data));
+      // Count how many have a PM assignment (for diagnostics)
+      const assigned = apps.filter(a => a.pmEmail).length;
+      console.log(`[PM load] meta entries: ${totalInMeta}, with pmEmail: ${assigned}`);
       if (!apps.length) {
         const panel = document.getElementById('alist');
         if (panel) panel.innerHTML = `<div style="padding:20px;color:var(--mut);font-size:13px">
-          No applications available yet. Your administrator needs to log in first to publish the data.
+          No applications available yet. Your administrator needs to log in and click <strong>☁ Sync to PMs</strong>.
         </div>`;
-        toast('No applications found — waiting for admin sync', '');
+        toast('No applications found — admin needs to Sync to PMs', '');
       } else {
-        toast('Applications loaded (' + apps.length + ')', 'ok');
+        toast(`Loaded ${totalInMeta} apps (${assigned} assigned)`, assigned ? 'ok' : '');
       }
     } catch(e) {
       console.warn('PM meta load error:', e);
