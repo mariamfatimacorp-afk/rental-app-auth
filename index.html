@@ -889,6 +889,13 @@ async function loadApplications() {
   }
   renderList();
 
+  // Admin: auto-sync localStorage PM assignments to shared JSON so all users
+  // (PMs on other devices, other admins) see assignments cross-device.
+  // This fires every login so _crm_meta.json is always up to date.
+  if (currentUser?.role === 'admin') {
+    saveSharedMeta().catch(e => console.warn('meta auto-sync:', e));
+  }
+
   // PM users: auto-extract all PDFs in the background so PM assignments are
   // detected from the PDF itself, solving the cross-device localStorage problem.
   // Each extraction calls renderList() when done, so apps appear progressively.
@@ -1229,6 +1236,18 @@ function getVisibleApps() {
 function renderList() {
   updateSortDirBtn();
   const shown = getVisibleApps();
+
+  // Safety fallback: if the PM dropdown filter returns 0 apps but apps exist,
+  // the filter is stale (no assignments yet). Clear it and show all apps so
+  // the admin is never stuck at a blank screen.
+  if (currentUser?.role === 'admin' && shown.length === 0 && apps.length > 0) {
+    const pmEl = document.getElementById('pmFilter');
+    if (pmEl && pmEl.value) {
+      pmEl.value = '';
+      toast('No apps assigned to that PM yet — showing all applications', '');
+      return renderList(); // re-render without filter (pmEl.value is now '' so no loop)
+    }
+  }
 
   // Base list (PM-filtered but ignoring status tab) — for per-tab counts
   let base = apps;
