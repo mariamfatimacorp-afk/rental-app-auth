@@ -1280,7 +1280,10 @@ function selApp(id) {
   const incomeRatio = (totalIncome > 0 && rentAmt > 0) ? Math.round(totalIncome / rentAmt * 100) : 0;
   const anyFlag = a.crBankruptcy === 'Yes' || a.crEviction === 'Yes' || a.crLatePayments === 'Yes' || a.crRefused === 'Yes';
   const pmLabel = PM_NAMES[a.pmEmail] || a.propertyManager || '';
-  const isAdmin = currentUser?.role === 'admin';
+  const isAdmin  = currentUser?.role === 'admin';
+  // Only these two accounts may generate lease agreements
+  const canLease = ['mariam@mfocorp.onmicrosoft.com', 'umairlasi@gmail.com']
+                     .includes(currentUser?.email);
   const isPM    = currentUser?.role === 'pm';
   const sid = JSON.stringify(a.id);
 
@@ -1605,8 +1608,8 @@ function selApp(id) {
       </details>` : ''}
     </div>
 
-    <!-- ── Generate Lease bar (Admin only) ── -->
-    ${isAdmin ? `
+    <!-- ── Generate Lease bar (canLease accounts only) ── -->
+    ${canLease ? `
     <div class="abar">
       <div class="abar-txt">
         <strong>${a.status==='approved'?'✓ Ready to Generate Lease':'Generate Lease Agreement'}</strong>
@@ -1621,7 +1624,7 @@ function selApp(id) {
     <div class="abar" style="background:#F9FAFB;border-color:var(--bdr)">
       <div class="abar-txt">
         <strong style="color:var(--mut)">Lease Generation</strong>
-        <span style="color:var(--mut)">Only administrators can generate lease agreements.</span>
+        <span style="color:var(--mut)">Contact Mariam or Umair to generate a lease agreement.</span>
       </div>
     </div>`}`;
 
@@ -2743,7 +2746,42 @@ function getLeaseData() {
   const snow        = document.getElementById('f_snow').value;
   const yardMaint   = document.getElementById('f_yard').value;
   const garbage     = document.getElementById('f_garbage').value;
-  if (!addr || !agdate || !start || !end || !rent || !t1) { toast('Please fill in all required fields'); return null; }
+  // ── Required-field validation — highlight missing fields in red ─────────────
+  const LEASE_REQUIRED = [
+    { id: 'f_addr',   label: 'Property Address', val: addr },
+    { id: 'f_agdate', label: 'Agreement Date',   val: agdate },
+    { id: 'f_start',  label: 'Lease Start',      val: start },
+    { id: 'f_end',    label: 'Lease End',        val: end },
+    { id: 'f_rent',   label: 'Monthly Rent',     val: document.getElementById('f_rent').value.trim() },
+    { id: 'f_t1',     label: 'Primary Tenant',   val: t1 },
+    { id: 'f_land',   label: 'Landlord Name',    val: land },
+    { id: 'f_laddr',  label: 'Landlord Address', val: laddr },
+    { id: 'f_lemail', label: 'Landlord Email',   val: lemail },
+    { id: 'f_lphone', label: 'Landlord Phone',   val: lphone },
+  ];
+  // Clear any previous error styling
+  LEASE_REQUIRED.forEach(f => {
+    const el = document.getElementById(f.id);
+    if (el) { el.style.borderColor = ''; el.style.boxShadow = ''; }
+  });
+  const missing = LEASE_REQUIRED.filter(f => !f.val);
+  if (missing.length) {
+    missing.forEach(f => {
+      const el = document.getElementById(f.id);
+      if (!el) return;
+      el.style.borderColor = '#E53E3E';
+      el.style.boxShadow   = '0 0 0 3px rgba(229,62,62,0.18)';
+      // Auto-clear the red border when the user starts fixing the field
+      ['input','change'].forEach(ev =>
+        el.addEventListener(ev, () => { el.style.borderColor = ''; el.style.boxShadow = ''; }, { once: true })
+      );
+    });
+    // Scroll to the first missing field
+    const firstEl = document.getElementById(missing[0].id);
+    if (firstEl) firstEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    toast('⚠ Required fields missing: ' + missing.map(f => f.label).join(', '));
+    return null;
+  }
   return { addr, utype, appliances, agdate, start, end, rent, dep, late, rerent,
     tenants: [t1, t2, t3].filter(Boolean), occ, land, laddr, lemail, lphone, app: leaseApp,
     utils, utilCustom, accParking, accBackyard, accGarage, accLaundry, accStorage, entrance,
@@ -2752,6 +2790,10 @@ function getLeaseData() {
 
 // ── DOCX GENERATION (template-based via content control fill) ────────────────
 async function doGenDOCX() {
+  if (!['mariam@mfocorp.onmicrosoft.com', 'umairlasi@gmail.com'].includes(currentUser?.email)) {
+    toast('⚠ You do not have permission to generate lease agreements.');
+    return;
+  }
   let d;
   try { d = getLeaseData(); } catch(e) { toast('⚠ Form error: ' + e.message); return; }
   if (!d) return;
@@ -3493,7 +3535,10 @@ window.addEventListener('load', function () {
       msalApp = new msal.PublicClientApplication({
         auth: {
           clientId:    CLIENT_ID,
-          authority:   `https://login.microsoftonline.com/${TENANT_ID}`,
+          // 'common' allows both organisational accounts (mfocorp) AND personal
+          // Microsoft accounts (e.g. umairlasi@gmail.com linked to a MS identity).
+          // The USERS whitelist below still controls who can actually access the app.
+          authority:   'https://login.microsoftonline.com/common',
           redirectUri: REDIRECT_URI
         },
         cache: { cacheLocation: 'localStorage', storeAuthStateInCookie: true }
