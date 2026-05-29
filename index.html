@@ -1004,7 +1004,7 @@ function fileToDraftApp(f) {
   // Base object — empty fields will be filled by PDF extraction or loaded from cache
   const base = {
     id: f.id, spId: f.id,
-    submittedAt: f.createdDateTime ? f.createdDateTime.split('T')[0] : '',
+    submittedAt: f.createdDateTime || '',
     status: 'new', pmEmail: '', pdfUrl: f.webUrl || '', notes: '',
     name: name || f.name.replace(/\.pdf$/i, ''),
     propertyAddress, propertyManager: '',
@@ -1230,6 +1230,19 @@ let apps = [
 let filter = 'all', selId = null, step = 0, leaseApp = null, editMode = false;
 let searchQuery = '', sortDir = 'desc';
 
+// Format a submittedAt value (ISO datetime or date-only string) for display.
+// Shows date + time when the full timestamp is available, date-only otherwise.
+function fmtDateTime(str) {
+  if (!str) return '—';
+  const hasTime = str.includes('T');
+  const d = new Date(hasTime ? str : str + 'T12:00:00');
+  if (isNaN(d)) return str;
+  const datePart = d.toLocaleDateString('en-CA', { year: 'numeric', month: 'short', day: 'numeric' });
+  if (!hasTime) return datePart;
+  const timePart = d.toLocaleTimeString('en-CA', { hour: 'numeric', minute: '2-digit', hour12: true });
+  return datePart + ' · ' + timePart;
+}
+
 // ── LIST ──────────────────────────────────────────────────────────────────────
 function getVisibleApps() {
   let list = apps;
@@ -1380,7 +1393,7 @@ function renderList() {
         <span class="badge b-${a.status}">${a.status}</span>
       </div>
       <div class="acard-sub">${pmTag}<span>${hl(a.propertyAddress)}</span></div>
-      <div class="acard-sub"><span>Move-in: ${hl(a.desiredOccupancy || '—')}</span><span>Submitted ${a.submittedAt}</span></div>
+      <div class="acard-sub"><span>Move-in: ${hl(a.desiredOccupancy || '—')}</span><span>Submitted ${fmtDateTime(a.submittedAt)}</span></div>
     </div>`;
   }).join('') || `<div style="padding:20px;text-align:center;font-size:13px;color:var(--mut)">
     ${searchQuery ? `No results for "<strong>${searchQuery}</strong>"` : 'No applications match this filter.'}
@@ -1568,7 +1581,7 @@ function selApp(id) {
       <div>
         <div class="dname">${editMode ? `<input class="ef-input" id="ef_name" value="${a.name.replace(/"/g,'&quot;')}" style="font-size:18px;font-weight:700">` : a.name}</div>
         <div class="dmeta" style="margin-top:5px;gap:8px">
-          <span>Submitted ${a.submittedAt || '—'}</span>
+          <span>Submitted ${fmtDateTime(a.submittedAt)}</span>
           <span class="pm-tag ${pmClass(a.pmEmail)}">${pmLabel || 'Unassigned'}</span>
         </div>
       </div>
