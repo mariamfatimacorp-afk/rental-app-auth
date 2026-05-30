@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Lasi P. Management — Rental Applications</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@2.38.3/dist/msal-browser.min.js"></script>
+
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -1392,7 +1392,11 @@ function toast(msg,type=''){
   setTimeout(()=>t.classList.remove('show'),3200);
 }
 
-initAuth();
+
+  <script type="module">
+  import * as msal from 'https://esm.sh/@azure/msal-browser@2.38.3';
+  window.msal = msal;
+  initAuth();
 </script>
 </body>
 </html>
