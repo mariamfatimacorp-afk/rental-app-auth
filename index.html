@@ -636,7 +636,8 @@ const SP_SITE   = 'mfocorp.sharepoint.com,58eef16b-dfbf-4d68-aca5-0ac7eaca6668,5
 const SP_FOLDER = 'Rental Applications/Rental Applications PDFs';
 
 // Optional: set this to a SharePoint list GUID once you add a structured list to Power Automate
-const SP_LIST   = 'YOUR_APPLICATIONS_LIST_ID';
+const SP_LIST   = 'Rental Application Form';
+let SP_FIELD_MAP = {};
 
 // Path to the Word lease template inside Documents library.
 // Upload "Lease Template.docx" to SharePoint → Documents/Rental Applications/Lease Template.docx
@@ -1099,14 +1100,29 @@ async function loadApplications() {
     const token = await getToken();
 
     if (SP_USE_LIST) {
-      // ── Mode A: Structured SharePoint list (when SP_LIST is configured) ──────
-      const res = await fetch(
-        `https://graph.microsoft.com/v1.0/sites/${SP_SITE}/lists/${SP_LIST}/items?$expand=fields&$top=200`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      if (!res.ok) throw new Error('List fetch failed: ' + res.status);
-      const data = await res.json();
-      if (data.value?.length) apps = data.value.map(mapSPItem);
+      // ── Mode A: Structured SharePoint list ──────────────────────────────────
+      // Step 1: build display-name → internal-name map (once per session)
+      if (!Object.keys(SP_FIELD_MAP).length) {
+        const colRes = await fetch(
+          `https://graph.microsoft.com/v1.0/sites/${SP_SITE}/lists/${encodeURIComponent(SP_LIST)}/columns`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        if (colRes.ok) {
+          const colData = await colRes.json();
+          (colData.value || []).forEach(col => { SP_FIELD_MAP[col.displayName] = col.name; });
+        }
+      }
+      // Step 2: fetch all items with pagination
+      let allItems = [];
+      let nextUrl = `https://graph.microsoft.com/v1.0/sites/${SP_SITE}/lists/${encodeURIComponent(SP_LIST)}/items?$expand=fields&$top=200&$orderby=fields/Created%20desc`;
+      while (nextUrl) {
+        const res = await fetch(nextUrl, { headers: { Authorization: `Bearer ${token}` } });
+        if (!res.ok) throw new Error('List fetch failed: ' + res.status);
+        const data = await res.json();
+        allItems = allItems.concat(data.value || []);
+        nextUrl = data['@odata.nextLink'] || null;
+      }
+      if (allItems.length) apps = allItems.map(mapSPItem);
 
     } else {
       // ── Mode B: PDF folder in SharePoint Documents library ────────────────────
@@ -1225,11 +1241,100 @@ function fileToDraftApp(f) {
   };
 }
 
+function gf(f, displayName) {
+  const k = SP_FIELD_MAP[displayName];
+  let val = k ? f[k] : f[displayName];
+  if (val === null || val === undefined) return '';
+  if (typeof val === 'object' && val.dateTime) return val.dateTime;
+  return String(val);
+}
+
 function mapSPItem(item) {
   const f = item.fields || {};
+  const F = name => gf(f, name);
+  const cleanDate = v => v ? String(v).split('T')[0] : '';
+  const fullName = [F('First Name'), F('Middle Name'), F('Last Name')].filter(Boolean).join(' ').trim() || F('Name') || F('Title') || '';
+  const coFullName = [F("Co-Applicant's First Name"), F("Co-Applicant's Middle Name"), F("Co-Applicant's Last Name")].filter(Boolean).join(' ').trim();
+  const pmDisplay = F('Select Property Manager');
+  const pmOption = PM_OPTIONS.find(o => PM_NAMES[o.email] === pmDisplay || o.name === pmDisplay || o.email === pmDisplay);
+  const pmEmail = pmOption?.email || '';
   return {
     id: item.id, spId: item.id,
-    submittedAt:      f.SubmittedDate      || '',
+    createdAt: item.createdDateTime || '',
+    modifiedAt: item.lastModifiedDateTime || '',
+    submittedAt: F('Completion time') || F('Start time') || item.createdDateTime || '',
+    status: (F('Status') || 'new').toLowerCase(),
+    notes: F('Notes') || '',
+    pmNotes: F('PM Notes') || '',
+    monthlyRent: parseFloat(F('Monthly Rent')) || 0,
+    pdfUrl: F('PDF Link') || '',
+    landlordName: F('Landlord Name') || '',
+    landlordAddress: F('Landlord Address') || '',
+    landlordEmail: F('Landlord Email') || '',
+    landlordPhone: F('Landlord Phone') || '',
+    pmEmail, propertyManager: pmDisplay || PM_NAMES[pmEmail] || '',
+    propertyAddress: F('Address of Property') || '',
+    desiredOccupancy: cleanDate(F('Date of Occupany Desired')),
+    maxOccupants: F('Maximum no. of occupants:') || '',
+    adults: F('Adults') || '',
+    children: F('Children (give ages)') || '',
+    name: fullName,
+    email: F('Email1') || F('Email') || '',
+    phone1: formatPhone(F('Phone 1')) || F('Phone 1') || '',
+    phone2: formatPhone(F('Phone 2')) || F('Phone 2') || '',
+    dob: cleanDate(F('Date of Birth')),
+    currentAddress: F('Current Address') || '',
+    coName: coFullName,
+    coEmail: F("Co-Applicant's Email Address") || '',
+    coPhone1: formatPhone(F("Co-Applicant's Phone 1")) || F("Co-Applicant's Phone 1") || '',
+    coPhone2: formatPhone(F("Co-Applicant's Phone 2")) || F("Co-Applicant's Phone 2") || '',
+    coDob: cleanDate(F("Co-Applicant's Date of Birth")),
+    coCurrentAddress: F("Co-Applicant's Current Address") || '',
+    prevLandlordName: F("Previous Landlord's Name") || '',
+    prevLandlordPhone: formatPhone(F("Previous Landlord's Phone")) || F("Previous Landlord's Phone") || '',
+    prevAddress: F('Previous Address') || '',
+    prevStay: F('Duration of Previous Tenancy') || '',
+    prevRent: F('Previous Monthly Rent') || '',
+    prevReason: F('Reason for Leaving') || '',
+    empStatus: F('Employment Status') || '',
+    empEmployer: F('Current Employer') || '',
+    empAddress: F("Employer's Address:") || '',
+    empSupervisor: F("Supervisor's Name") || '',
+    empSupPhone: formatPhone(F("Supervisor's Phone")) || F("Supervisor's Phone") || '',
+    empLength: F('Length of Employment') || '',
+    empWage: parseFloat(F('Monthly Wage $')) || 0,
+    empPosition: F('Job Role') || '',
+    empOther: F('If you have other sources of income that you would like us to consider, please list income, source and person:') || '',
+    coEmpEmployer: F("Co-Applicant's Current Employer") || '',
+    coEmpAddress: F("Co-Applicant's Employer's Address ") || '',
+    coEmpSupervisor: F("Co-Applicant's Supervisor's Name") || '',
+    coEmpSupPhone: formatPhone(F("Co-Applicant's Supervisor's Phone")) || F("Co-Applicant's Supervisor's Phone") || '',
+    coEmpLength: F("Co-Applicant's Length of Employment") || '',
+    coEmpWage: parseFloat(F("Co-Applicant's Monthly Wage $")) || 0,
+    coEmpPosition: F("Co-Applicant's Job Role") || '',
+    crBankruptcy: F('Have you declared bankruptcy in the past seven (7) years?') || '',
+    crEviction: F('Have you ever been evicted from a rental residence?') || '',
+    crLatePayments: F('Have you had two or more late rental payments in the past 12 months?') || '',
+    crRefused: F('Have you ever refused to pay rent when due?') || '',
+    crExplanation: F('If you have answered YES to any of the above, please state your reasons and/or circumstances:') || '',
+    hasPets: F('Do you wish to bring a pet(s] lo the rental premises?') || '',
+    petDesc: F('If yes, describe the pets:') || '',
+    smokes: F('Do you, or any proposed occupant, smoke?') || '',
+    hasInsurance: F('NOTE: Landlords are not responsible for tenants\' possessions. If accepted you must carry tenant\'s insurance covering your possessions and protecting you against liability. I/We presently insure our be') || '',
+    jointCreditConsent: F('If you are co-applicants, do you consent to a joint credit report?') || '',
+    ackNoPetsPermission: F('The Applicant and/or Co-Applicant acknowledges that pets, barbecues, waterbeds and aquariums are not permitted without the advance written permission of the Landlord.   ') || '',
+    ackPetDeposit: F('If the Landlord permits a pet, an additional non refundable Pet Damage Deposit will be paid to the Landlord. The Landlord will hold the Deposit(s) until the Tenancy ends.   ') || '',
+    ackInfoTrue: F('The Applicant(s) do(es) hereby state that the information contained herein is true and correct, and contain no misrepresentations. If misrepresentations are found after a residential tenancy agreement') || '',
+    ackAuthorizeObtain: F('The Applicant(s) and/or Co-Applicant authorize the Landlord to obtain tenant history, credit, personal and employment information from one or more consumer reporting agencies, previous landlords, empl') || '',
+    ackAuthorizeDisclose: F('The Applicant[s) and/or Co­ Applicant autborize(s) the reporting agencies, and any other person, including personnel from any governmental ministry or agency, to disclose relevant information about th') || '',
+    ref1Name: F('Reference 1 - Full Name') || '', ref1Rel: F('Relationship with Reference 1') || '', ref1Phone: formatPhone(F('Reference 1 - Phone')) || F('Reference 1 - Phone') || '',
+    ref2Name: F('Reference 2 - Name') || '', ref2Rel: F('Relationship with Reference 2') || '', ref2Phone: formatPhone(F('Reference 2 - Phone')) || F('Reference 2 - Phone') || '',
+    ref3Name: F('Reference 3 - Name') || '', ref3Rel: F('Relationship with Reference 3 ') || '', ref3Phone: formatPhone(F('Reference 3 - Phone')) || F('Reference 3 - Phone') || '',
+    emgName: F("Emergency Contact's Name (Not residing with you):") || '',
+    emgAddress: F("Emergency Contact's Address") || '',
+    emgPhone: formatPhone(F("Emergency Contact's Phone")) || F("Emergency Contact's Phone") || '',
+    emgRel: F("Emergency Contact's Relationship") || '',
+    pdfParsed: true, parseVersion: PARSE_VERSION, pdfRawText: '', pdfAnnFields: '',
     status:           (f.Status || 'new').toLowerCase(),
     notes:            f.Notes              || '',
     propertyAddress:  f.PropertyAddress    || '',
@@ -1301,15 +1406,17 @@ async function patchSP(spId, fields) {
   if (!SP_READY) return;
   try {
     const token = await getToken();
-    // List mode: PATCH list item fields
-    // Folder mode: PATCH the file's listItem metadata columns on the document library
     const url = SP_USE_LIST
-      ? `https://graph.microsoft.com/v1.0/sites/${SP_SITE}/lists/${SP_LIST}/items/${spId}/fields`
+      ? `https://graph.microsoft.com/v1.0/sites/${SP_SITE}/lists/${encodeURIComponent(SP_LIST)}/items/${spId}/fields`
       : `https://graph.microsoft.com/v1.0/sites/${SP_SITE}/drive/items/${spId}/listItem/fields`;
+    const translated = {};
+    Object.entries(fields).forEach(([key, val]) => {
+      translated[SP_FIELD_MAP[key] || key] = val;
+    });
     const res = await fetch(url, {
       method: 'PATCH',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(fields)
+      body: JSON.stringify(translated)
     });
     if (!res.ok) console.warn('patchSP HTTP error:', res.status, await res.text());
   } catch(e) { console.warn('SharePoint PATCH failed:', e); }
