@@ -548,21 +548,16 @@ let isAdmin = false;
 
 async function initAuth() {
   showScreen('loading');
+  const timeout = ms => new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms));
   try {
     msalInstance = new msal.PublicClientApplication(msalConfig);
-    await msalInstance.initialize();
-    const resp = await msalInstance.handleRedirectPromise();
+    await Promise.race([msalInstance.initialize(), timeout(8000)]);
+    const resp = await Promise.race([msalInstance.handleRedirectPromise(), timeout(5000)]);
     if (resp) {
       handleAuthResponse(resp.account);
     } else {
       const accounts = msalInstance.getAllAccounts();
-      accounts.length > 0 ? handleAuthResponse(accounts[0]) : showScreen('login');
-    }
-  } catch (e) {
-    console.error('MSAL init error:', e);
-    showScreen('login');
-  }
-}
+      accounts.length > 0 ? handleAuthResponse(accounts[0]) : show
 
 function handleAuthResponse(account) {
   // Check both username and idTokenClaims.email — external/guest accounts
