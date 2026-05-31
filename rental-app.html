@@ -557,7 +557,13 @@ async function initAuth() {
       handleAuthResponse(resp.account);
     } else {
       const accounts = msalInstance.getAllAccounts();
-      accounts.length > 0 ? handleAuthResponse(accounts[0]) : show
+      accounts.length > 0 ? handleAuthResponse(accounts[0]) : showScreen('login');
+    }
+  } catch (e) {
+    console.error('MSAL init error:', e);
+    showScreen('login');
+  }
+}
 
 function handleAuthResponse(account) {
   // Check both username and idTokenClaims.email — external/guest accounts
