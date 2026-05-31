@@ -4,9 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Lasi P. Management — Rental Management</title>
-<script src="https://unpkg.com/@azure/msal-browser@2.39.0/lib/msal-browser.min.js"
-  onerror="document.getElementById('loginError').textContent='⚠ Sign-in library blocked by browser or network. Try disabling ad blockers or use a different browser.';document.getElementById('loginError').style.display='block';">
-</script>
+
 <script src="https://unpkg.com/html-docx-js/dist/html-docx.js" defer></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" defer></script>
 <script src="https://cdn.jsdelivr.net/npm/pizzip@3.1.4/dist/pizzip.min.js" defer></script>
@@ -187,6 +185,39 @@ textarea.notes:focus{outline:none;border-color:var(--acc)}
 .login-demo select{width:100%;padding:8px 10px;border:1.5px solid var(--bdr);border-radius:6px;font-size:13px;color:var(--txt);margin-bottom:8px}
 .login-demo button{width:100%;padding:9px;background:var(--acc);color:#fff;border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer}
 #loginError{margin-top:14px;padding:10px 12px;background:#FEE2E2;border-radius:6px;font-size:12px;color:#991B1B;display:none;text-align:left}
+.sb-nav{display:flex;border-bottom:1px solid var(--bdr);flex-shrink:0}
+.sbn{flex:1;padding:9px 4px;border:none;background:none;font-size:11.5px;font-weight:600;color:var(--mut);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;font-family:inherit;transition:.15s}
+.sbn.on{color:var(--pri);border-bottom-color:var(--pri)}
+.sbn:hover:not(.on){color:var(--txt);background:var(--bg)}
+.proc-view{padding:20px 22px;overflow-y:auto;flex:1;display:none}
+.proc-grid{display:grid;gap:14px}
+.proc-card{background:var(--card);border:1px solid var(--bdr);border-radius:10px;padding:18px 20px}
+.proc-card-head{display:flex;align-items:flex-start;gap:12px;margin-bottom:14px}
+.proc-icon{width:40px;height:40px;border-radius:9px;background:var(--bg);display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;border:1px solid var(--bdr)}
+.proc-card-head h3{font-size:14px;font-weight:700;margin-bottom:3px;color:var(--txt)}
+.proc-card-head p{font-size:12px;color:var(--mut);line-height:1.45}
+.proc-pick{margin-bottom:12px}
+.proc-pick label{font-size:10px;font-weight:700;color:var(--mut);text-transform:uppercase;letter-spacing:.3px;display:block;margin-bottom:5px}
+.proc-pick select{width:100%;padding:7px 10px;border:1.5px solid var(--bdr);border-radius:6px;font-family:inherit;font-size:13px;color:var(--txt)}
+.proc-preview{background:var(--bg);border-radius:7px;padding:10px 13px;margin-bottom:12px;font-size:12.5px;line-height:1.65;display:none}
+.proc-preview.show{display:block}
+.proc-preview .pl{font-size:10px;color:var(--mut);font-weight:700;text-transform:uppercase;letter-spacing:.3px;display:block;margin-bottom:2px}
+.n8n-cfg{background:#FFF7ED;border:1px solid #FDBA74;border-radius:6px;padding:9px 12px;font-size:11.5px;color:#9A3412;margin-top:12px;line-height:1.6}
+.n8n-configured{background:#F0FDF4;border:1px solid #BBF7D0;border-radius:6px;padding:7px 12px;font-size:11.5px;color:#166534;margin-top:12px}
+.docs-tabs{display:flex;gap:4px;margin-bottom:12px;border-bottom:1px solid var(--bdr);padding-bottom:1px}
+.dtab{padding:5px 12px;border:none;background:none;font-size:12px;font-weight:600;color:var(--mut);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-2px;font-family:inherit;transition:.15s}
+.dtab.on{color:var(--pri);border-bottom-color:var(--pri)}
+.dpanel{display:none}
+.dpanel.on{display:block}
+.doc-section{margin-bottom:12px}
+.doc-section h4{font-size:10px;font-weight:700;color:var(--pri);text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px;border-bottom:1px solid var(--bdr);padding-bottom:3px}
+.doc-item{display:flex;gap:7px;font-size:12.5px;line-height:1.5;margin-bottom:4px;color:var(--txt)}
+.doc-item::before{content:"•";color:var(--acc);font-weight:900;flex-shrink:0}
+.doc-sub{margin-left:14px;margin-top:2px}
+.doc-sub .doc-item::before{content:"–";color:var(--mut)}
+.doc-note{background:#FFFBEB;border:1px solid #FDE68A;border-radius:6px;padding:7px 11px;font-size:11.5px;color:#92400E;margin-top:8px}
+.email-tpl{background:var(--bg);border:1px solid var(--bdr);border-radius:7px;padding:13px;font-size:12px;line-height:1.7;color:var(--txt);white-space:pre-wrap;font-family:inherit;max-height:280px;overflow-y:auto}
+.copy-bar{display:flex;justify-content:flex-end;margin-bottom:8px}
 </style>
 </head>
 <body>
@@ -246,6 +277,10 @@ textarea.notes:focus{outline:none;border-color:var(--acc)}
   </header>
   <div class="layout">
     <aside>
+      <div class="sb-nav">
+        <button class="sbn on" id="sbn-apps" onclick="switchView('apps')">Applications</button>
+        <button class="sbn" id="sbn-proc" onclick="switchView('proc')">Processes</button>
+      </div>
       <div class="sbhead">
         <h2>Applications</h2>
         <!-- Search -->
@@ -291,7 +326,71 @@ textarea.notes:focus{outline:none;border-color:var(--acc)}
         <p>Pick a rental application from the sidebar to review all details, then generate the lease agreement once approved.</p>
       </div>
       <div id="detail" style="display:none"></div>
-    </main>
+     </main>
+    <div id="vmp" class="proc-view">
+      <div style="max-width:700px;margin:0 auto">
+        <div style="margin-bottom:18px">
+          <h2 style="font-size:17px;font-weight:700;margin-bottom:3px">Team Processes</h2>
+          <p style="font-size:12px;color:var(--mut)">Workflows and communication templates for the Lasi P. Management team.</p>
+        </div>
+        <div class="proc-grid">
+          <div class="proc-card">
+            <div class="proc-card-head">
+              <div class="proc-icon">📧</div>
+              <div><h3>Send Requirements to Tenant</h3><p>Trigger an N8n workflow to automatically email the document requirements checklist to an applicant.</p></div>
+            </div>
+            <div class="proc-pick">
+              <label>Select Applicant</label>
+              <select id="req-app-select" onchange="updateReqPreview()"><option value="">— choose applicant —</option></select>
+            </div>
+            <div class="proc-preview" id="req-preview"></div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <button id="req-send-btn" class="btn btn-pri" onclick="triggerSendRequirements()">Send via N8n</button>
+              <button class="btn btn-out" style="font-size:11px" onclick="copyTplText()">Copy email template</button>
+            </div>
+            <div id="n8n-status"></div>
+          </div>
+          <div class="proc-card">
+            <div class="proc-card-head">
+              <div class="proc-icon">📋</div>
+              <div><h3>Required Documents</h3><p>Checklist and tenant email template for collecting application supporting documents.</p></div>
+            </div>
+            <div class="docs-tabs">
+              <button class="dtab on" onclick="switchDocTab(this,0)">Applicant Checklist</button>
+              <button class="dtab" onclick="switchDocTab(this,1)">Tenant Email Template</button>
+            </div>
+            <div class="dpanel on">
+              <div class="doc-section"><h4>1. Government-Issued Photo ID</h4><div class="doc-item">One valid photo ID for each adult applicant (18+)</div><div class="doc-sub"><div class="doc-item">Driver's licence</div><div class="doc-item">Passport</div><div class="doc-item">Provincial ID card</div></div></div>
+              <div class="doc-section"><h4>2. Credit Report (within last 30 days)</h4><div class="doc-item">Required for each adult applicant — free options:</div><div class="doc-sub"><div class="doc-item">Your bank's mobile app — TD, RBC, BMO, Scotiabank, CIBC</div><div class="doc-item">Credit Karma — creditkarma.ca</div><div class="doc-item">Equifax Canada — equifax.ca</div></div></div>
+              <div class="doc-section"><h4>3. Proof of Income</h4><div class="doc-item">Employed: two most recent pay stubs</div><div class="doc-item">Self-employed: last two months of bank statements</div></div>
+              <div class="doc-note">⚠ Incomplete applications will not be reviewed. All documents are kept confidential.</div>
+            </div>
+            <div class="dpanel">
+              <div class="copy-bar"><button class="btn btn-out" style="font-size:11px" onclick="copyTplText()">Copy to clipboard</button></div>
+              <pre class="email-tpl" id="emailTpl">Hi [Tenant Name],
+
+Thank you for your interest in the rental unit! To move forward with your application, please send me the following documents for all adult applicants:
+
+1. Photo ID — a government-issued photo ID for each applicant.
+
+2. Credit Report — a recent credit report for each applicant. Free options:
+   • Your bank's mobile app (a screenshot is fine)
+   • Credit Karma — creditkarma.ca
+   • Equifax Canada — equifax.ca
+
+3. Proof of Income:
+   • If employed — your two most recent pay stubs
+   • If self-employed — bank statements from the last two months
+
+Please send all documents at your earliest convenience.
+
+[Your Name]
+[Your Phone Number]</pre>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -627,9 +726,100 @@ Rule: Do not generate lease if another unit is rented and existing lease has not
 // ── MSAL SETUP ────────────────────────────────────────────────────────────────
 // msalApp is created in window.onload to guarantee the MSAL library is fully
 // loaded before we reference it (avoids "msal is not defined" if CDN is slow).
-let msalApp = null;
-// Sites.ReadWrite.All covers listing files, reading/writing file metadata and list items
 const SCOPES = ['User.Read', 'Sites.ReadWrite.All', 'Files.ReadWrite.All'];
+
+async function init() {
+  if (IS_DEMO) {
+    document.getElementById('msLoginBtn').style.display = 'none';
+    document.getElementById('demoSection').style.display = 'block';
+    return;
+  }
+  try {
+    const p = new URLSearchParams(window.location.search);
+    const code = p.get('code'), state = p.get('state');
+    if (code && state === sessionStorage.getItem('pkce_s')) {
+      const verifier = sessionStorage.getItem('pkce_v');
+      const r = await fetch(`https://login.microsoftonline.com/${TENANT_ID}/oauth2/v2.0/token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          client_id: CLIENT_ID, code, redirect_uri: REDIRECT_URI,
+          grant_type: 'authorization_code', code_verifier: verifier,
+          scope: SCOPES.join(' ')
+        })
+      });
+      const t = await r.json();
+      if (t.error) throw new Error(t.error_description || t.error);
+      const pl = JSON.parse(atob(t.id_token.split('.')[1].replace(/-/g,'+').replace(/_/g,'/')));
+      const account = { username: pl.preferred_username || pl.email || '', name: pl.name || '', idTokenClaims: pl };
+      sessionStorage.setItem('auth_acct', JSON.stringify(account));
+      sessionStorage.setItem('auth_token', t.access_token);
+      sessionStorage.setItem('auth_token_exp', String(Date.now() + (t.expires_in || 3600) * 1000));
+      sessionStorage.removeItem('pkce_v'); sessionStorage.removeItem('pkce_s');
+      history.replaceState({}, '', REDIRECT_URI);
+      signIn(account); return;
+    }
+    const saved = sessionStorage.getItem('auth_acct');
+    if (saved) { signIn(JSON.parse(saved)); return; }
+  } catch(e) {
+    console.error('Auth error:', e);
+    showLoginError('Authentication error: ' + e.message + '. Please refresh and try again.');
+  }
+}
+
+async function doLogin() {
+  if (IS_DEMO) return;
+  const arr = crypto.getRandomValues(new Uint8Array(32));
+  const verifier = btoa(String.fromCharCode(...arr)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,'');
+  const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
+  const challenge = btoa(String.fromCharCode(...new Uint8Array(hash))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,'');
+  const state = Math.random().toString(36).slice(2);
+  sessionStorage.setItem('pkce_v', verifier);
+  sessionStorage.setItem('pkce_s', state);
+  window.location.href = `https://login.microsoftonline.com/${TENANT_ID}/oauth2/v2.0/authorize?` + new URLSearchParams({
+    client_id: CLIENT_ID, response_type: 'code', response_mode: 'query',
+    redirect_uri: REDIRECT_URI, scope: SCOPES.join(' '), state,
+    code_challenge: challenge, code_challenge_method: 'S256'
+  });
+}
+
+function doLogout() {
+  currentUser = null; apps = [];
+  sessionStorage.removeItem('auth_acct');
+  sessionStorage.removeItem('auth_token');
+  sessionStorage.removeItem('auth_token_exp');
+  document.getElementById('appWrap').style.display = 'none';
+  document.getElementById('loginScreen').style.display = 'flex';
+  document.getElementById('loginError').style.display = 'none';
+  document.getElementById('userName').textContent = '';
+  document.getElementById('userEmail').textContent = '';
+  document.getElementById('userRole').textContent = '';
+  document.getElementById('demoUser').value = '';
+}
+
+function doSwitchAccount() {
+  currentUser = null; apps = [];
+  sessionStorage.removeItem('auth_acct');
+  sessionStorage.removeItem('auth_token');
+  sessionStorage.removeItem('auth_token_exp');
+  document.getElementById('appWrap').style.display = 'none';
+  document.getElementById('loginScreen').style.display = 'flex';
+  document.getElementById('loginError').style.display = 'none';
+  document.getElementById('userName').textContent = '';
+  document.getElementById('userEmail').textContent = '';
+  document.getElementById('userRole').textContent = '';
+  doLogin();
+}
+
+async function getToken() {
+  if (IS_DEMO) return null;
+  const token = sessionStorage.getItem('auth_token');
+  const exp = parseInt(sessionStorage.getItem('auth_token_exp') || '0');
+  if (token && Date.now() < exp - 60000) return token;
+  showLoginError('Session expired. Please sign in again.');
+  doLogout();
+  return null;
+}
 
 let currentUser = null;
 
@@ -3763,6 +3953,77 @@ function buildPDF(d) {
   doc.save(`Lease_${d.utype==='upper'?'Upper':'Basement'}_${d.tenants[0].replace(/ /g,'_')}.pdf`);
 }
 
+// ── PROCESSES ─────────────────────────────────────────────────────────────────
+const CONFIG = { n8nSendRequirements: '' };
+
+function switchView(v) {
+  const isApps = v === 'apps';
+  document.querySelector('.sbhead').style.display = isApps ? '' : 'none';
+  document.getElementById('alist').style.display = isApps ? '' : 'none';
+  document.getElementById('main').style.display = isApps ? '' : 'none';
+  document.getElementById('vmp').style.display = isApps ? 'none' : 'block';
+  document.getElementById('sbn-apps').classList.toggle('on', isApps);
+  document.getElementById('sbn-proc').classList.toggle('on', !isApps);
+  if (!isApps) populateReqSelect();
+}
+
+function populateReqSelect() {
+  const sel = document.getElementById('req-app-select');
+  sel.innerHTML = '<option value="">— choose applicant —</option>' +
+    apps.map(a => `<option value="${a.id}">${a.name} — ${a.propertyAddress} (${a.status})</option>`).join('');
+}
+
+function updateReqPreview() {
+  const id = parseInt(document.getElementById('req-app-select').value);
+  const preview = document.getElementById('req-preview');
+  if (!id) { preview.classList.remove('show'); return; }
+  const a = apps.find(x => x.id === id);
+  preview.classList.add('show');
+  preview.innerHTML = `<span class="pl">Will send to</span><strong>${a.name}</strong><br>${a.email} &nbsp;·&nbsp; ${a.phone1}<br><span style="color:var(--mut);font-size:12px">${a.propertyAddress} &nbsp;·&nbsp; PM: ${a.propertyManager || 'Unassigned'}</span>`;
+  updateN8nStatus();
+}
+
+function updateN8nStatus() {
+  const el = document.getElementById('n8n-status');
+  if (!el) return;
+  el.innerHTML = CONFIG.n8nSendRequirements
+    ? '<div class="n8n-configured">✓ N8n webhook configured — ready to send</div>'
+    : '<div class="n8n-cfg"><strong>N8n not configured yet.</strong> Paste your webhook URL into <code>CONFIG.n8nSendRequirements</code> to enable automatic sending.</div>';
+}
+
+async function triggerSendRequirements() {
+  const id = parseInt(document.getElementById('req-app-select').value);
+  if (!id) { toast('Select an applicant first'); return; }
+  if (!CONFIG.n8nSendRequirements) { toast('Paste your N8n webhook URL into CONFIG.n8nSendRequirements first', 'warn'); return; }
+  const a = apps.find(x => x.id === id);
+  const btn = document.getElementById('req-send-btn');
+  btn.disabled = true; btn.textContent = 'Sending…';
+  try {
+    await fetch(CONFIG.n8nSendRequirements, {
+      method: 'POST', mode: 'no-cors',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tenantName: a.name, tenantEmail: a.email, tenantPhone: a.phone1, propertyAddress: a.propertyAddress, propertyManager: a.propertyManager, applicationId: a.id, desiredMoveIn: a.desiredOccupancy })
+    });
+    toast('Requirements sent to ' + a.name + '!', 'ok');
+    btn.textContent = '✓ Sent';
+    setTimeout(() => { btn.disabled = false; btn.textContent = 'Send via N8n'; }, 3000);
+  } catch(e) { toast('N8n trigger failed — check webhook URL'); btn.disabled = false; btn.textContent = 'Send via N8n'; }
+}
+
+function switchDocTab(btn, i) {
+  const card = btn.closest('.proc-card');
+  card.querySelectorAll('.dtab').forEach((t,j) => t.classList.toggle('on', j===i));
+  card.querySelectorAll('.dpanel').forEach((p,j) => p.classList.toggle('on', j===i));
+}
+
+function copyTplText() {
+  const text = document.getElementById('emailTpl').innerText;
+  navigator.clipboard.writeText(text).then(
+    () => toast('Email template copied to clipboard', 'ok'),
+    () => toast('Could not copy — please select and copy manually')
+  );
+}
+
 // ── TOAST ─────────────────────────────────────────────────────────────────────
 function toast(msg, type='') {
   const t = document.getElementById('toast');
@@ -3774,35 +4035,6 @@ function toast(msg, type='') {
 // Use window.onload so all external scripts (MSAL CDN, etc.) are fully loaded
 // before we try to create the PublicClientApplication instance.
 window.addEventListener('load', function () {
-  if (!IS_DEMO) {
-    if (typeof msal === 'undefined') {
-      console.error('MSAL library did not load from CDN.');
-      document.getElementById('loginError').textContent =
-        'Sign-in library failed to load. Check your internet connection and refresh.';
-      document.getElementById('loginError').style.display = 'block';
-      return;
-    }
-    try {
-      msalApp = new msal.PublicClientApplication({
-        auth: {
-          clientId:    CLIENT_ID,
-          // Use the org-specific tenant so ALL users (org accounts + B2B guests)
-          // receive a tenant-scoped token that SharePoint will accept.
-          // /common issued consumer MSA tokens which SharePoint rejects with 400/404.
-          // Guests (hotmail, gmail) must first be invited in Azure AD Entra.
-          authority:   'https://login.microsoftonline.com/' + TENANT_ID,
-          redirectUri: REDIRECT_URI
-        },
-        cache: { cacheLocation: 'localStorage', storeAuthStateInCookie: true }
-      });
-    } catch (e) {
-      console.error('MSAL PublicClientApplication failed:', e);
-      document.getElementById('loginError').textContent =
-        'Sign-in setup error: ' + e.message + '. Please refresh the page.';
-      document.getElementById('loginError').style.display = 'block';
-      return;
-    }
-  }
   init();
 });
 </script>
