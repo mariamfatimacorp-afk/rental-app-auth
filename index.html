@@ -1159,7 +1159,15 @@ function fileToDraftApp(f) {
 
 function mapSPItem(item) {
   const f = item.fields || {};
-  const s = k => f[k] !== null && f[k] !== undefined ? String(f[k]) : '';
+    const s = k => f[k] !== null && f[k] !== undefined ? String(f[k]) : '';
+  if (f.AppNotes !== undefined) f.Notes = f.AppNotes;
+  if (f.PMNotes !== undefined) f.PM_Notes = f.PMNotes;
+  if (f.MonthlyRent !== undefined) f.Monthly_Rent = f.MonthlyRent;
+  if (f.PDFLink !== undefined) f.PDF_Link = f.PDFLink;
+  if (f.LandlordName !== undefined) f.Landlord_Name = f.LandlordName;
+  if (f.LandlordAddress !== undefined) f.Landlord_Address = f.LandlordAddress;
+  if (f.LandlordEmail !== undefined) f.Landlord_Email = f.LandlordEmail;
+  if (f.LandlordPhone !== undefined) f.Landlord_Phone = f.LandlordPhone;
   const cleanDate = v => v ? String(v).split('T')[0] : '';
    let fullName = [s('field_11'), s('field_12'), s('field_13')].filter(Boolean).join(' ').trim() || s('field_4') || '';
   const titleRaw = s('Title');
@@ -1255,9 +1263,12 @@ async function patchSP(spId, fields) {
     const url = SP_USE_LIST
       ? `https://graph.microsoft.com/v1.0/sites/${SP_SITE}/lists/${encodeURIComponent(SP_LIST)}/items/${spId}/fields`
       : `https://graph.microsoft.com/v1.0/sites/${SP_SITE}/drive/items/${spId}/listItem/fields`;
+       const COLMAP = { Notes:'AppNotes', PM_Notes:'PMNotes', Monthly_Rent:'MonthlyRent', App_MonthlyRent:'MonthlyRent', PDF_Link:'PDFLink', PDFUrl:'PDFLink', Landlord_Name:'LandlordName', Landlord_Address:'LandlordAddress', Landlord_Email:'LandlordEmail', Landlord_Phone:'LandlordPhone', App_Status:'Status', Utility_Clause:null, utilityClause:null, Property_Manager:null, App_PM:null, PMEmail:null };
     const translated = {};
     Object.entries(fields).forEach(([key, val]) => {
-      translated[SP_FIELD_MAP[key] || key] = val;
+      let nk = COLMAP.hasOwnProperty(key) ? COLMAP[key] : (SP_FIELD_MAP[key] || key);
+      if (nk === null) return;
+      translated[nk] = val;
     });
     const res = await fetch(url, {
       method: 'PATCH',
@@ -1730,7 +1741,7 @@ function selApp(id) {
       </div>
       <div class="dacts" style="flex-wrap:wrap;gap:6px">
         ${!editMode && isAdmin ? `<button class="btn btn-ylw" onclick='toggleEdit(${sid})'>✏️ Edit</button>` : ''}
-        ${!editMode && isAdmin ? `<button class="btn btn-out" style="font-size:11px" onclick='rescanPdf(${sid})'>↻ Rescan PDF</button>` : ''}
+  
         ${a.pdfUrl ? `<a href="${a.pdfUrl}" target="_blank" rel="noopener noreferrer" class="btn btn-pri">&#128196; View PDF</a>` : ''}
       </div>
     </div>
@@ -3151,7 +3162,7 @@ function getLeaseData() {
     { id: 'f_land',   label: 'Landlord Name',    val: land },
     { id: 'f_laddr',  label: 'Landlord Address', val: laddr },
     { id: 'f_lemail', label: 'Landlord Email',   val: lemail },
-    { id: 'f_lphone', label: 'Landlord Phone',   val: lphone },
+ 
   ];
   // Clear any previous error styling
   LEASE_REQUIRED.forEach(f => {
