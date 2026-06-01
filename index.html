@@ -825,14 +825,6 @@ async function getToken() {
 let currentUser = null;
 
 // ── AUTH FLOW ─────────────────────────────────────────────────────────────────
-async function init() {
-  if (IS_DEMO) {
-    document.getElementById('msLoginBtn').style.display = 'none';
-    document.getElementById('demoSection').style.display = 'block';
-    return;
-  }
-  try {
-    await msalApp.initialize();
     // Handles both loginRedirect and acquireTokenRedirect responses
     const resp = await msalApp.handleRedirectPromise();
     if (resp?.account) { signIn(resp.account); return; }
@@ -858,17 +850,6 @@ async function init() {
       return; // login screen already visible; user just clicks Sign In again
     }
     showLoginError('Authentication error: ' + e.message + '. Please refresh and try again.');
-  }
-}
-
-async function doLogin() {
-  if (IS_DEMO) return;
-  try {
-    // Use redirect (not popup) — GitHub Pages sets COOP headers that block popup messaging
-    await msalApp.loginRedirect({ scopes: SCOPES });
-  } catch(e) {
-    console.error('Login error:', e);
-    showLoginError('Sign-in failed: ' + (e.message || e));
   }
 }
 
@@ -913,65 +894,6 @@ function showLoginError(msg) {
   const el = document.getElementById('loginError');
   el.textContent = msg;
   el.style.display = 'block';
-}
-
-function doLogout() {
-  currentUser = null;
-  apps = [];
-  // Clear MSAL local state without navigating away (onRedirectNavigate: false)
-  if (!IS_DEMO && msalApp) {
-    try {
-      msalApp.logoutRedirect({ onRedirectNavigate: () => false });
-    } catch(e) {
-      console.warn('MSAL logout:', e);
-    }
-  }
-  // Always return to login screen immediately
-  document.getElementById('appWrap').style.display = 'none';
-  document.getElementById('loginScreen').style.display = 'flex';
-  document.getElementById('loginError').style.display = 'none';
-  document.getElementById('userName').textContent = '';
-  document.getElementById('userEmail').textContent = '';
-  document.getElementById('userRole').textContent = '';
-  document.getElementById('demoUser').value = '';
-}
-
-// Sign in with a different Microsoft account (forces account-picker UI).
-// Clears local state then triggers a fresh redirect with prompt=select_account.
-function doSwitchAccount() {
-  currentUser = null;
-  apps = [];
-  document.getElementById('appWrap').style.display = 'none';
-  document.getElementById('loginScreen').style.display = 'flex';
-  document.getElementById('loginError').style.display = 'none';
-  document.getElementById('userName').textContent = '';
-  document.getElementById('userEmail').textContent = '';
-  document.getElementById('userRole').textContent = '';
-  if (!IS_DEMO && msalApp) {
-    try {
-      // Remove all cached accounts so MSAL doesn't auto-sign in the old user
-      msalApp.getAllAccounts().forEach(acc => msalApp.clearCache());
-    } catch(e) { console.warn('clearCache:', e); }
-    try {
-      // Redirect to Microsoft with account-picker forced
-      msalApp.loginRedirect({ scopes: SCOPES, prompt: 'select_account' });
-    } catch(e) {
-      console.warn('Switch account redirect:', e);
-    }
-  }
-}
-
-async function getToken() {
-  if (IS_DEMO || !msalApp) return null;
-  try {
-    const r = await msalApp.acquireTokenSilent({ scopes: SCOPES, account: currentUser?.account });
-    return r.accessToken;
-  } catch(e) {
-    // acquireTokenPopup is blocked by COOP headers on GitHub Pages — use redirect instead
-    console.warn('Silent token refresh failed, redirecting for re-auth:', e.errorCode || e.message);
-    try { await msalApp.acquireTokenRedirect({ scopes: SCOPES }); } catch(re) { console.error('acquireTokenRedirect:', re); }
-    return null; // page is navigating away; caller will not continue
-  }
 }
 
 // ── SHARED METADATA (cross-device sync + PM data access) ─────────────────────
