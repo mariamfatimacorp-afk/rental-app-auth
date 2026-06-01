@@ -727,7 +727,7 @@ Rule: Do not generate lease if another unit is rented and existing lease has not
 // ── MSAL SETUP ────────────────────────────────────────────────────────────────
 // msalApp is created in window.onload to guarantee the MSAL library is fully
 // loaded before we reference it (avoids "msal is not defined" if CDN is slow).
-const SCOPES = ['User.Read', 'Sites.ReadWrite.All', 'Files.ReadWrite.All'];
+const SCOPES = ['openid', 'profile', 'email', 'User.Read', 'Sites.ReadWrite.All', 'Files.ReadWrite.All'];
 
 async function init() {
   if (IS_DEMO) {
