@@ -1193,6 +1193,7 @@ function mapSPItem(item) {
     landlordAddress: s('Landlord_Address') || '',
     landlordEmail: s('Landlord_Email') || '',
     landlordPhone: s('Landlord_Phone') || '',
+    utilityClause: s('UtilityClause') || '',
     pmEmail, propertyManager: pmDisplay || PM_NAMES[pmEmail] || '',
     propertyAddress: s('field_5') || titleAddress,
     desiredOccupancy: cleanDate(s('field_7')),
@@ -2917,7 +2918,7 @@ async function savePmFields(id) {
   if (notesEl) updates.pmNotes     = notesEl.value.trim();
   Object.assign(a, updates);
   appMeta(a.id, updates); // persist locally
-  if (a.spId) patchSP(a.spId, { App_MonthlyRent: updates.monthlyRent }).catch(() => {});
+   if (a.spId) patchSP(a.spId, { MonthlyRent: Number(updates.monthlyRent)||0, PMNotes: updates.pmNotes || '' }).catch(() => {});
   selApp(id); // re-render detail with saved values
   toast('Saved', 'ok');
 }
@@ -2974,14 +2975,16 @@ function saveEdit(id) {
   editMode = false;
   renderList(); // update sidebar card in case name/PM changed
   selApp(id);
-  if (a.spId && SP_READY) {
-    // Best-effort SharePoint sync for key fields
-    const spFields = {};
-    if (updates.name)            spFields.Title            = updates.name;
-    if (updates.email)           spFields.Email            = updates.email;
-    if (updates.phone1)          spFields.Phone1           = updates.phone1;
-    if (updates.propertyAddress) spFields.PropertyAddress  = updates.propertyAddress;
-    if (Object.keys(spFields).length) patchSP(a.spId, spFields).catch(() => {});
+   if (a.spId && SP_READY) {
+    patchSP(a.spId, {
+      LandlordName: a.landlordName || '',
+      LandlordAddress: a.landlordAddress || '',
+      LandlordEmail: a.landlordEmail || '',
+      LandlordPhone: a.landlordPhone || '',
+      MonthlyRent: Number(a.monthlyRent) || 0,
+      PMNotes: a.pmNotes || ''
+    }).catch(() => {});
+    if (a.utilityClause) patchSP(a.spId, { UtilityClause: a.utilityClause }).catch(() => {});
   }
   toast('Application data saved ✓', 'ok');
 }
