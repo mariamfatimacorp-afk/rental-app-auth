@@ -1161,7 +1161,12 @@ function mapSPItem(item) {
   const f = item.fields || {};
   const s = k => f[k] !== null && f[k] !== undefined ? String(f[k]) : '';
   const cleanDate = v => v ? String(v).split('T')[0] : '';
-  const fullName = [s('field_11'), s('field_12'), s('field_13')].filter(Boolean).join(' ').trim() || s('field_4') || '';
+   let fullName = [s('field_11'), s('field_12'), s('field_13')].filter(Boolean).join(' ').trim() || s('field_4') || '';
+  const titleRaw = s('Title');
+  if (!fullName && titleRaw && !/^\d+$/.test(titleRaw)) {
+    fullName = titleRaw.includes(' - ') ? titleRaw.split(' - ').slice(1).join(' & ') : titleRaw;
+  }
+  const titleAddress = titleRaw && titleRaw.includes(' - ') ? titleRaw.split(' - ')[0].trim() : '';
   const coFullName = [s('field_20'), s('field_21'), s('field_22')].filter(Boolean).join(' ').trim();
   const pmDisplay = s('field_6');
   const pmOption = PM_OPTIONS.find(o => PM_NAMES[o.email] === pmDisplay || o.name === pmDisplay || o.email === pmDisplay);
@@ -1181,7 +1186,7 @@ function mapSPItem(item) {
     landlordEmail: s('Landlord_Email') || '',
     landlordPhone: s('Landlord_Phone') || '',
     pmEmail, propertyManager: pmDisplay || PM_NAMES[pmEmail] || '',
-    propertyAddress: s('field_5'),
+    propertyAddress: s('field_5') || titleAddress,
     desiredOccupancy: cleanDate(s('field_7')),
     maxOccupants: s('field_8'),
     adults: s('field_9'),
