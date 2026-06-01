@@ -826,32 +826,6 @@ let currentUser = null;
 
 // ── AUTH FLOW ─────────────────────────────────────────────────────────────────
     // Handles both loginRedirect and acquireTokenRedirect responses
-    const resp = await msalApp.handleRedirectPromise();
-    if (resp?.account) { signIn(resp.account); return; }
-    // Check for already-cached account (returning user, token still valid)
-    const accounts = msalApp.getAllAccounts();
-    if (accounts.length > 0) { signIn(accounts[0]); return; }
-  } catch(e) {
-    console.error('MSAL init error:', e);
-    const code = e.errorCode || '';
-    const msg  = e.message  || '';
-    // AADSTS50020 = account not in this directory → user needs to be added as a guest
-    if (msg.includes('AADSTS50020') || msg.includes('does not exist in tenant') || msg.includes('guest')) {
-      try { msalApp.clearCache(); } catch(_) {}
-      showLoginError('Your account has not been added to this system yet. Please ask your administrator to invite you as a guest in Azure AD.');
-      return;
-    }
-    // interaction_required / block_iframe_reload / AADSTS160021 = stale session, not a real error.
-    // Clear the bad cache state and drop back to the login screen quietly.
-    if (code === 'interaction_required' || code === 'login_required' ||
-        code === 'block_iframe_reload'  || code === 'monitor_window_timeout' ||
-        msg.includes('AADSTS') || msg.includes('interaction_required')) {
-      try { msalApp.clearCache(); } catch(_) {}
-      return; // login screen already visible; user just clicks Sign In again
-    }
-    showLoginError('Authentication error: ' + e.message + '. Please refresh and try again.');
-  }
-}
 
 function doDemo() {
   const email = document.getElementById('demoUser').value;
