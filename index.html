@@ -1010,7 +1010,7 @@ async function loadApplications() {
       }
       // Step 2: fetch all items with pagination
       let allItems = [];
-            let nextUrl = `https://graph.microsoft.com/v1.0/sites/${SP_SITE}/lists/${encodeURIComponent(SP_LIST)}/items?$expand=fields&$top=200`;
+           let nextUrl = `https://graph.microsoft.com/v1.0/sites/${SP_SITE}/lists/${encodeURIComponent(SP_LIST)}/items?$expand=fields($select=*)&$top=200`;
       while (nextUrl) {
         const res = await fetch(nextUrl, { headers: { Authorization: `Bearer ${token}` } });
         if (!res.ok) throw new Error('List fetch failed: ' + res.status);
