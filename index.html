@@ -1018,7 +1018,27 @@ async function loadApplications() {
         allItems = allItems.concat(data.value || []);
         nextUrl = data['@odata.nextLink'] || null;
       }
-      if (allItems.length) apps = allItems.map(mapSPItem);
+           if (allItems.length) apps = allItems.map(mapSPItem);
+
+      // Load PDFs from folder and match to list items by name for pdfUrl
+      try {
+        const pdfRes = await fetch(
+          `https://graph.microsoft.com/v1.0/sites/${SP_SITE}/drive/root:/${encodeURIComponent(SP_FOLDER).replace(/%2F/g,'/')}:/children?$select=id,name,webUrl&$top=500`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        if (pdfRes.ok) {
+          const pdfs = (await pdfRes.json()).value?.filter(f => f.name.toLowerCase().endsWith('.pdf')) || [];
+          apps.forEach(app => {
+            if (app.pdfUrl) return;
+            const nameParts = app.name.toLowerCase().replace(/[^a-z0-9 ]/g,' ').split(' ').filter(p => p.length > 2);
+            const match = pdfs.find(pdf => {
+              const fn = pdf.name.toLowerCase();
+              return nameParts.filter(p => fn.includes(p)).length >= 2;
+            });
+            if (match) app.pdfUrl = match.webUrl;
+          });
+        }
+      } catch(e) { console.warn('PDF match error:', e); }
 
     } else {
       // ── Mode B: PDF folder in SharePoint Documents library ────────────────────
