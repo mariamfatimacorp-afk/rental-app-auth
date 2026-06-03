@@ -3054,14 +3054,16 @@ function openModal(id) {
     ? rawAddr : rawAddr + ', Calgary, Alberta';
   document.getElementById('f_t1').value = leaseApp.name;
   document.getElementById('f_t2').value = leaseApp.coName || '';
-  document.getElementById('f_t3').value = '';
+   document.getElementById('f_t3').value = (((leaseApp.additionalTenants)||'').split('\n').map(s=>s.trim()).filter(Boolean))[0] || '';
   document.getElementById('f_occ').value = leaseApp.maxOccupants;
   // Pre-fill landlord / rent from PM section if set
   if (leaseApp.landlordName)    document.getElementById('f_land').value   = leaseApp.landlordName;
   if (leaseApp.landlordAddress) document.getElementById('f_laddr').value  = leaseApp.landlordAddress;
   if (leaseApp.landlordEmail)   document.getElementById('f_lemail').value = leaseApp.landlordEmail;
   if (leaseApp.landlordPhone)   document.getElementById('f_lphone').value = formatPhone(leaseApp.landlordPhone) || leaseApp.landlordPhone;
-  if (leaseApp.monthlyRent)     document.getElementById('f_rent').value   = leaseApp.monthlyRent;
+    if (leaseApp.monthlyRent)   document.getElementById('f_rent').value = leaseApp.monthlyRent;
+  document.getElementById('f_dep').value = leaseApp.monthlyRent || '';
+  { const _r=document.getElementById('f_rent'), _d=document.getElementById('f_dep'); _r.oninput=()=>{ _d.value=_r.value; }; }
   if (leaseApp.utilityClause)   { document.getElementById('f_util_custom').value = leaseApp.utilityClause; document.querySelector('input[name="f_utils"][value="other"]').checked = true; toggleUtilCustom(); }
   const oc = leaseApp.desiredOccupancy;
   if (oc) {
