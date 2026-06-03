@@ -1199,7 +1199,9 @@ function mapSPItem(item) {
     landlordAddress: s('Landlord_Address') || '',
     landlordEmail: s('Landlord_Email') || '',
     landlordPhone: s('Landlord_Phone') || '',
-    utilityClause: s('UtilityClause') || '',
+      utilityClause: s('UtilityClause') || '',
+    signedLeaseLink: s('SignedLeaseLink') || '',
+    leaseLink: s('LeaseLink') || '',
     pmEmail, propertyManager: pmDisplay || PM_NAMES[pmEmail] || '',
     propertyAddress: s('field_5') || titleAddress,
     desiredOccupancy: cleanDate(s('field_7')),
@@ -1977,10 +1979,13 @@ function selApp(id) {
           ?'Application approved. Generate the Alberta Residential Tenancy Agreement now.'
           :'Set status to Approved first, or generate a draft lease to review.'}</span>
       </div>
-      <div class="abar-btns">
+           <div class="abar-btns" style="flex-direction:column;align-items:flex-end;gap:6px">
         <button class="btn btn-acc btn-lg" onclick='openModal(${sid})'>Generate Lease &rarr;</button>
+        <input type="file" accept="application/pdf" id="signedUp_${a.id}" style="display:none" onchange='uploadSignedLease(${sid}, this)'>
+        <button class="btn btn-out" style="font-size:11px" onclick='document.getElementById("signedUp_${a.id}").click()'>&#11014; Upload Signed Lease (PDF)</button>
+        ${a.signedLeaseLink ? `<a href="${a.signedLeaseLink}" target="_blank" rel="noopener noreferrer" class="btn btn-grn" style="font-size:11px">&#128196; View Signed Lease &#8599;</a>` : ''}
       </div>
-    </div>` : `
+    </div>` : ``
     <div class="abar" style="background:#F9FAFB;border-color:var(--bdr)">
       <div class="abar-txt">
         <strong style="color:var(--mut)">Lease Generation</strong>
@@ -3295,7 +3300,45 @@ function confirmAdditionalTerms(d) {
 
 // ── LEASE RECORD → Lease Agreements list ─────────────────────────────────────
 const LEASE_LIST_ID = '5c7d29ab-5c20-455b-86b2-a3b2816d9f3f';
+const LEASE_PDF_DRIVE_ID = 'b!a_HuWL_faE2spQrH6spmaNveHlthixJEiVvxPFnBMdQnwauxJfOwSKHW6BBmHtBb';
+const LEASE_PDF_FOLDER_ID = '01FHVTJHKDFYO23GRL3BHYWVPZDSYFSOLF';
 let leaseSaved = false;
+async function uploadSignedLease(id, input) {
+  const a = apps.find(x => String(x.id) === String(id));
+  if (!a) return;
+  const file = input.files && input.files[0];
+  if (!file) return;
+  if (!/\.pdf$/i.test(file.name)) { toast('Please choose a PDF file','warn'); input.value=''; return; }
+  const token = await getToken(); if (!token) return;
+  toast('Uploading signed lease…');
+  try {
+    const clean = s => String(s||'').replace(/[\\\/:*?"<>|]+/g,' ').replace(/\s+/g,' ').trim();
+    const fname = clean(`${a.propertyAddress||''} - ${a.name||'Lease'} - SIGNED`) + '.pdf';
+    const up = await fetch(`https://graph.microsoft.com/v1.0/drives/${LEASE_PDF_DRIVE_ID}/items/${LEASE_PDF_FOLDER_ID}:/${encodeURIComponent(fname)}:/content`, {
+      method:'PUT', headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/pdf'}, body: file
+    });
+    if (!up.ok) { console.warn('signed upload', up.status, await up.text()); toast('⚠ Upload failed ('+up.status+')'); return; }
+    const item = await up.json();
+    const url = item.webUrl;
+    a.signedLeaseLink = url;
+    patchSP(a.spId, { SignedLeaseLink: url }).catch(()=>{});
+    const today = new Date().toISOString().split('T')[0];
+    try {
+      const q = await fetch(`https://graph.microsoft.com/v1.0/sites/${SP_SITE}/lists/${LEASE_LIST_ID}/items?$expand=fields&$filter=fields/ApplicationId eq ${parseInt(a.spId)}&$top=10`, {headers:{Authorization:`Bearer ${token}`,'Prefer':'HonorNonIndexedQueriesWarningMayFailRandomly'}});
+      const qd = await q.json();
+      const recs = (qd.value||[]).sort((x,y)=> new Date(y.createdDateTime)-new Date(x.createdDateTime));
+      if (recs[0]) {
+        await fetch(`https://graph.microsoft.com/v1.0/sites/${SP_SITE}/lists/${LEASE_LIST_ID}/items/${recs[0].id}/fields`, {
+          method:'PATCH', headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
+          body: JSON.stringify({ SignedPdfUrl: url, SignedDate: today, LeaseStatus: 'Signed' })
+        });
+      }
+    } catch(e){ console.warn('mark signed', e); }
+    input.value='';
+    toast('✓ Signed lease uploaded & linked', 'ok');
+    selApp(id);
+  } catch(e){ console.warn('uploadSignedLease', e); toast('⚠ Upload error: ' + e.message); }
+}
 async function saveLeaseRecord(d) {
   if (leaseSaved || !d || !d.app || !d.app.spId) return;
   const token = await getToken(); if (!token) return;
