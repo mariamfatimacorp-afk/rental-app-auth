@@ -1199,8 +1199,9 @@ function mapSPItem(item) {
     landlordAddress: s('Landlord_Address') || '',
     landlordEmail: s('Landlord_Email') || '',
     landlordPhone: s('Landlord_Phone') || '',
-      utilityClause: s('UtilityClause') || '',
+    utilityClause: s('UtilityClause') || '',
     signedLeaseLink: s('SignedLeaseLink') || '',
+    additionalTenants: s('AdditionalTenants') || '',
     leaseLink: s('LeaseLink') || '',
     pmEmail, propertyManager: pmDisplay || PM_NAMES[pmEmail] || '',
     propertyAddress: s('field_5') || titleAddress,
@@ -1942,6 +1943,14 @@ function selApp(id) {
         ${frow('Address', a.emgAddress, '', 'emgAddress')}
       </div>
     </div>
+
+       ${(isAdmin || isPM) ? `
+    <div class="scard" style="margin-bottom:12px">
+      <h3><span class="icon">👥</span> Additional Tenants / Cosigners</h3>
+      <p style="font-size:11px;color:var(--mut);margin:-4px 0 8px">Extra adults to appear on the lease, beyond the primary applicant and co-applicant. One name per line.</p>
+      <textarea class="notes" id="addlTenants_${a.id}" placeholder="e.g.&#10;Jane Smith&#10;Robert Lee">${a.additionalTenants||''}</textarea>
+      <button class="btn btn-out" style="font-size:11px;margin-top:7px" onclick='saveAdditionalTenants(${sid})'>Save Additional Tenants</button>
+    </div>` : ''}
 
     <!-- ── Notes + PDF link ── -->
     <div class="scard" style="margin-bottom:12px">
@@ -2909,12 +2918,20 @@ async function saveNotes(id) {
   a.notes = val;
   appMeta(a.id, { notes: val }); // always persist locally for cross-session access
   saveSharedMeta().catch(() => {}); // sync notes to shared JSON
-  if (a.spId && SP_READY) {
+    if (a.spId && SP_READY) {
     await patchSP(a.spId, { Notes: val });
     toast('Notes saved to SharePoint', 'ok');
   } else {
     toast('Notes saved locally', 'ok');
   }
+}
+async function saveAdditionalTenants(id) {
+  const a = apps.find(x => String(x.id) === String(id));
+  if (!a) return;
+  const val = (document.getElementById('addlTenants_' + id)?.value || '').trim();
+  a.additionalTenants = val;
+  if (a.spId && SP_READY) { await patchSP(a.spId, { AdditionalTenants: val }); toast('Additional tenants saved', 'ok'); }
+  else toast('Saved', 'ok');
 }
 
 // PM-only: save monthly rent + PM notes inline (no edit mode required for PMs)
@@ -3204,7 +3221,7 @@ function getLeaseData() {
   }
   const customClauses = (document.getElementById('f_custom_clauses')?.value || '').trim();
   return { addr, utype, appliances, agdate, start, end, rent, dep, late, rerent,
-    tenants: [t1, t2, t3].filter(Boolean), occ, land, laddr, lemail, lphone, app: leaseApp,
+       tenants: (() => { const base=[t1,t2,t3].filter(Boolean); ((leaseApp&&leaseApp.additionalTenants)||'').split('\n').map(s=>s.trim()).filter(Boolean).forEach(n=>{ if(!base.some(x=>x.toLowerCase()===n.toLowerCase())) base.push(n); }); return base; })(), occ, land, laddr, lemail, lphone, app: leaseApp,
     utils, utilCustom, accParking, accBackyard, accGarage, accLaundry, accStorage, entrance,
     pets, petDesc, snow, yardMaint, garbage, customClauses };
 }
