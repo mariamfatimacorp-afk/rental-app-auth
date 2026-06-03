@@ -3236,8 +3236,7 @@ async function doGenDOCX() {
     const url  = URL.createObjectURL(blob);
     const a    = document.createElement('a');
     a.href = url;
-    const utypeLabel = d.utype === 'upper' ? 'Upper' : d.utype === 'basement' ? 'Basement' : 'House';
-    a.download = `Lease_${utypeLabel}_${(d.tenants[0] || 'Tenant').replace(/ /g,'_')}.docx`;
+    a.download = leaseFileName(d) + '.docx';
     document.body.appendChild(a); a.click(); a.remove();
     URL.revokeObjectURL(url);
     closeModal();
@@ -3283,6 +3282,13 @@ function confirmAdditionalTerms(d) {
   if (!Object.keys(f).length) return;
   a.landlordName=d.land; a.landlordAddress=d.laddr; a.landlordEmail=d.lemail; a.landlordPhone=d.lphone; if(d.rent)a.monthlyRent=Number(d.rent);
   patchSP(a.spId, f).then(()=>toast('Landlord details saved to the application','ok')).catch(()=>{});
+}
+  function leaseFileName(d) {
+  const clean = s => String(s||'').replace(/[\\\/:*?"<>|]+/g,' ').replace(/\s+/g,' ').trim();
+  const addr = clean(d.app && d.app.propertyAddress ? d.app.propertyAddress : d.addr) || 'Property';
+  const names = d.tenants.filter(Boolean).map(clean);
+  const who = names.length > 1 ? names.slice(0,-1).join(', ') + ' and ' + names[names.length-1] : (names[0] || 'Tenant');
+  return clean(addr + ' - ' + who);
 }
 
 // ── TEMPLATE-BASED LEASE GENERATION (Word content controls) ──────────────────
@@ -3376,7 +3382,7 @@ async function generateLeaseFromTemplate(d) {
   const url = URL.createObjectURL(blob);
   const a   = document.createElement('a');
   a.href = url;
-  a.download = `Lease_${(d.tenants[0] || 'Tenant').replace(/[^A-Za-z0-9]+/g,'_')}.docx`;
+   a.download = leaseFileName(d) + '.docx';
   document.body.appendChild(a); a.click(); a.remove();
   URL.revokeObjectURL(url);
   closeModal();
@@ -3977,7 +3983,7 @@ function buildPDF(d) {
   d.tenants.forEach(name=>{chk(16);ln(ML+CW/2,y,PW-MR,y);doc.setFontSize(9);doc.setFont('times','normal');doc.text('Signature of Tenant',ML+CW/2,y+5);y+=16;});
   y+=4;doc.setFontSize(FS);doc.setFont('times','bold');doc.text('Tenants: '+d.tenants.join(', '),ML,y);y+=6;
   if(d.app){doc.setFont('times','normal');doc.setFontSize(9);doc.text(`${d.app.name}: ${d.app.email} | ${d.app.phone1}`,ML,y);}
-  doc.save(`Lease_${d.utype==='upper'?'Upper':'Basement'}_${d.tenants[0].replace(/ /g,'_')}.pdf`);
+  doc.save(leaseFileName(d) + '.pdf');
 }
 
 // ── PROCESSES ─────────────────────────────────────────────────────────────────
