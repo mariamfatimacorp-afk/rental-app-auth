@@ -1949,8 +1949,8 @@ function selApp(id) {
     <div class="scard" style="margin-bottom:12px">
       <h3><span class="icon">✍️</span> Cosigners (sign the lease)</h3>
       <p style="font-size:11px;color:var(--mut);margin:-4px 0 8px">People who will sign the lease, beyond the primary applicant and co-applicant. One name per line — each is added to the lease with their own signature line.</p>
-      <textarea class="notes" id="addlTenants_${a.id}" placeholder="e.g.&#10;Jane Smith&#10;Robert Lee">${a.additionalTenants||''}</textarea>
-           <button class="btn btn-out" style="font-size:11px;margin-top:7px" onclick='saveAdditionalOccupants(${sid})'>Save Occupants</button>
+       <textarea class="notes" id="addlTenants_${a.id}" placeholder="e.g.&#10;Jane Smith&#10;Robert Lee">${a.additionalTenants||''}</textarea>
+      <button class="btn btn-out" style="font-size:11px;margin-top:7px" onclick='saveAdditionalTenants(${sid})'>Save Cosigners</button>
     </div>
     <div class="scard" style="margin-bottom:12px">
       <h3><span class="icon">📎</span> Tenant Documents</h3>
@@ -1963,7 +1963,7 @@ function selApp(id) {
         <button class="btn btn-out" style="font-size:11px" onclick='loadTenantDocs(${sid})'>📂 Show documents</button>
       </div>
       <div id="docList_${a.id}" style="font-size:12px"></div>
-    </div>` : ''}
+    </div>
     <div class="scard" style="margin-bottom:12px">
       <h3><span class="icon">🏠</span> Additional Occupants (not on lease)</h3>
       <p style="font-size:11px;color:var(--mut);margin:-4px 0 8px">Others who will live at the property but do not sign the lease. Informational only — one name per line.</p>
