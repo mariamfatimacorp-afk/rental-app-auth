@@ -3211,8 +3211,9 @@ async function doGenDOCX() {
   }
   let d;
   try { d = getLeaseData(); } catch(e) { toast('⚠ Form error: ' + e.message); return; }
-    if (!d) return;
+     if (!d) return;
   if (!confirmAdditionalTerms(d)) return;
+  saveLeaseLandlordBack(d);
 
   // Prefer template-based generation (requires only PizZip)
   if (typeof PizZip !== 'undefined') {
@@ -3269,6 +3270,19 @@ function confirmAdditionalTerms(d) {
   if(!terms.length) return true;
   const list = terms.map((t,i)=>`${31+i}. ${t}`).join('\n\n');
   return confirm('These PROPERTY-SPECIFIC TERMS will be added to the lease (in bold), before the signatures:\n\n'+list+'\n\nGenerate the lease with these terms?');
+}
+  function saveLeaseLandlordBack(d) {
+  const a = d.app;
+  if (!a || !a.spId || !SP_READY) return;
+  const f = {};
+  if (d.land   && d.land   !== a.landlordName)    f.LandlordName    = d.land;
+  if (d.laddr  && d.laddr  !== a.landlordAddress) f.LandlordAddress = d.laddr;
+  if (d.lemail && d.lemail !== a.landlordEmail)   f.LandlordEmail   = d.lemail;
+  if (d.lphone && d.lphone !== a.landlordPhone)   f.LandlordPhone   = d.lphone;
+  if (d.rent   && Number(d.rent) !== Number(a.monthlyRent)) f.MonthlyRent = Number(d.rent);
+  if (!Object.keys(f).length) return;
+  a.landlordName=d.land; a.landlordAddress=d.laddr; a.landlordEmail=d.lemail; a.landlordPhone=d.lphone; if(d.rent)a.monthlyRent=Number(d.rent);
+  patchSP(a.spId, f).then(()=>toast('Landlord details saved to the application','ok')).catch(()=>{});
 }
 
 // ── TEMPLATE-BASED LEASE GENERATION (Word content controls) ──────────────────
@@ -3608,8 +3622,9 @@ function buildLeaseTemplateData(d) {
 function doGenPDF() {
   let d;
   try { d = getLeaseData(); } catch(e) { toast('⚠ Form error: ' + e.message); return; }
-   if (!d) return;
+     if (!d) return;
   if (!confirmAdditionalTerms(d)) return;
+  saveLeaseLandlordBack(d);
   if (typeof window.jspdf === 'undefined') {
     toast('⚠ PDF library not loaded yet — please wait a moment and try again');
     return;
