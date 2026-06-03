@@ -3024,6 +3024,7 @@ function copyDbg() {
 function openModal(id) {
   leaseApp = apps.find(a => String(a.id) === String(id));
   step = 0;
+  leaseSaved = false;
   document.getElementById('f_agdate').value = new Date().toISOString().split('T')[0];
   // Only append ", Calgary, Alberta" if not already in the address
   const rawAddr = leaseApp.propertyAddress || '';
@@ -3212,8 +3213,9 @@ async function doGenDOCX() {
   let d;
   try { d = getLeaseData(); } catch(e) { toast('⚠ Form error: ' + e.message); return; }
      if (!d) return;
-  if (!confirmAdditionalTerms(d)) return;
+    if (!confirmAdditionalTerms(d)) return;
   saveLeaseLandlordBack(d);
+  saveLeaseRecord(d);
 
   // Prefer template-based generation (requires only PizZip)
   if (typeof PizZip !== 'undefined') {
@@ -3289,6 +3291,58 @@ function confirmAdditionalTerms(d) {
   const names = d.tenants.filter(Boolean).map(clean);
   const who = names.length > 1 ? names.slice(0,-1).join(', ') + ' and ' + names[names.length-1] : (names[0] || 'Tenant');
   return clean(addr + ' - ' + who);
+}
+
+// ── LEASE RECORD → Lease Agreements list ─────────────────────────────────────
+const LEASE_LIST_ID = '5c7d29ab-5c20-455b-86b2-a3b2816d9f3f';
+let leaseSaved = false;
+async function saveLeaseRecord(d) {
+  if (leaseSaved || !d || !d.app || !d.app.spId) return;
+  const token = await getToken(); if (!token) return;
+  const cap = s => s ? s.charAt(0).toUpperCase()+s.slice(1) : '';
+  const otherRented = document.querySelector('input[name="otherRented"]:checked')?.value || 'no';
+  const appLink = `https://mfocorp.sharepoint.com/sites/LasiPmanagement/Lists/Rental%20Application%20Form/DispForm.aspx?ID=${d.app.spId}`;
+  const fields = {
+    Title: leaseFileName(d),
+    ApplicationId: parseInt(d.app.spId) || null,
+    ApplicantName: d.app.name || '',
+    PropertyAddress: d.addr || '',
+    UnitType: cap(d.utype),
+    OtherUnitRented: cap(otherRented),
+    Appliances: d.appliances || '',
+    AgreementDate: d.agdate || null,
+    LeaseStart: d.start || null,
+    LeaseEnd: d.end || null,
+    MonthlyRent: Number(d.rent) || 0,
+    SecurityDeposit: Number(d.dep) || 0,
+    LatePenalty: Number(d.late) || 0,
+    ReRentalFee: Number(d.rerent) || 0,
+    Tenant1: d.tenants[0] || '', Tenant2: d.tenants[1] || '', Tenant3: d.tenants[2] || '',
+    MaxOccupants: parseInt(d.occ) || 0,
+    LandlordName: d.land || '', LandlordAddress: d.laddr || '', LandlordEmail: d.lemail || '', LandlordPhone: d.lphone || '',
+    Utilities: cap(d.utils), UtilityCustom: d.utilCustom || '',
+    AccessParking: d.accParking || '', AccessBackyard: d.accBackyard || '', AccessGarage: d.accGarage || '',
+    AccessLaundry: d.accLaundry || '', AccessStorage: d.accStorage || '', TenantEntrance: d.entrance || '',
+    PetsAllowed: d.pets === 'yes' ? 'Yes' : 'No', PetDescription: d.petDesc || '',
+    SnowRemoval: d.snow || '', YardMaintenance: d.yardMaint || '', GarbageBins: d.garbage || '',
+    CustomClauses: d.customClauses || '',
+    GeneratedBy: (currentUser && (currentUser.name || currentUser.email)) || '',
+    GeneratedDate: new Date().toISOString().split('T')[0],
+    LeaseStatus: 'Draft',
+    ApplicationLink: appLink
+  };
+  try {
+    const r = await fetch(`https://graph.microsoft.com/v1.0/sites/${SP_SITE}/lists/${LEASE_LIST_ID}/items`, {
+      method:'POST', headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
+      body: JSON.stringify({ fields })
+    });
+    if (!r.ok) { console.warn('saveLeaseRecord', r.status, await r.text()); toast('⚠ Lease doc created, but the record did not save'); return; }
+    const item = await r.json();
+    leaseSaved = true;
+    d.app.leaseRecordId = item.id;
+    if (item.webUrl) patchSP(d.app.spId, { LeaseLink: item.webUrl }).catch(()=>{});
+    toast('✓ Lease recorded (Draft) in SharePoint', 'ok');
+  } catch(e) { console.warn('saveLeaseRecord error', e); }
 }
 
 // ── TEMPLATE-BASED LEASE GENERATION (Word content controls) ──────────────────
@@ -3625,6 +3679,7 @@ function doGenPDF() {
      if (!d) return;
   if (!confirmAdditionalTerms(d)) return;
   saveLeaseLandlordBack(d);
+  saveLeaseRecord(d);
   if (typeof window.jspdf === 'undefined') {
     toast('⚠ PDF library not loaded yet — please wait a moment and try again');
     return;
