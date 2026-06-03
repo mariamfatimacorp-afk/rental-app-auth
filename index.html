@@ -3022,9 +3022,9 @@ async function loadTenantDocs(id){
     const master=await findChild(rootId,DOCS_MASTER_NAME);
     const prop=master&&await findChild(master.id,canonAddr(a.propertyAddress));
     if(!prop){el.innerHTML='<span style="color:var(--mut)">No documents uploaded yet.</span>';return;}
-    const tenants=(await (await fetch(base+'/items/'+prop.id+'/children?$expand=children($select=name,webUrl)&$select=id,name',{headers:H})).json()).value||[];
+        const tenants=((await (await fetch(base+'/items/'+prop.id+'/children?$select=id,name&$top=999',{headers:H})).json()).value)||[];
     let html='';
-    for(const t of tenants){ const files=t.children||[]; html+='<div style="margin-top:5px"><strong>'+t.name+'</strong>'+(files.length?files.map(function(f){return ' · <a href="'+f.webUrl+'" target="_blank" rel="noopener noreferrer">'+f.name+'</a>';}).join(''):' <span style="color:var(--mut)">(empty)</span>')+'</div>'; }
+    for(const t of tenants){ const files=((await (await fetch(base+'/items/'+t.id+'/children?$select=name,webUrl&$top=999',{headers:H})).json()).value)||[]; html+='<div style="margin-top:5px"><strong>'+t.name+'</strong>'+(files.length?files.map(function(f){return ' · <a href="'+f.webUrl+'" target="_blank" rel="noopener noreferrer">'+f.name+'</a>';}).join(''):' <span style="color:var(--mut)">(empty)</span>')+'</div>'; }
     el.innerHTML=html||'<span style="color:var(--mut)">No documents uploaded yet.</span>';
   }catch(e){console.warn('loadTenantDocs',e);el.innerHTML='<span style="color:#c0392b">Could not load documents.</span>';}
 }
