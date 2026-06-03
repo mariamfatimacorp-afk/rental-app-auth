@@ -1950,8 +1950,20 @@ function selApp(id) {
       <h3><span class="icon">✍️</span> Cosigners (sign the lease)</h3>
       <p style="font-size:11px;color:var(--mut);margin:-4px 0 8px">People who will sign the lease, beyond the primary applicant and co-applicant. One name per line — each is added to the lease with their own signature line.</p>
       <textarea class="notes" id="addlTenants_${a.id}" placeholder="e.g.&#10;Jane Smith&#10;Robert Lee">${a.additionalTenants||''}</textarea>
-      <button class="btn btn-out" style="font-size:11px;margin-top:7px" onclick='saveAdditionalTenants(${sid})'>Save Cosigners</button>
+           <button class="btn btn-out" style="font-size:11px;margin-top:7px" onclick='saveAdditionalOccupants(${sid})'>Save Occupants</button>
     </div>
+    <div class="scard" style="margin-bottom:12px">
+      <h3><span class="icon">📎</span> Tenant Documents</h3>
+      <p style="font-size:11px;color:var(--mut);margin:-4px 0 8px">Background documents (credit report, ID, bank statement, pay stubs), filed under the property → tenant folder.</p>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:7px">
+        <select id="docTenant_${a.id}" style="padding:5px 8px;border:1px solid var(--bdr);border-radius:6px;font-size:12px">${[a.name,a.coName].concat((a.additionalTenants||'').split('\n')).concat((a.additionalOccupants||'').split('\n')).map(n=>String(n||'').trim()).filter(Boolean).filter((v,i,arr)=>arr.indexOf(v)===i).map(n=>`<option>${n}</option>`).join('')}</select>
+        <select id="docType_${a.id}" style="padding:5px 8px;border:1px solid var(--bdr);border-radius:6px;font-size:12px"><option>Credit Report</option><option>Government ID</option><option>Bank Statement</option><option>Pay Stub</option><option>Other</option></select>
+        <input type="file" id="docFile_${a.id}" style="display:none" onchange='uploadTenantDoc(${sid})'>
+        <button class="btn btn-out" style="font-size:11px" onclick='document.getElementById("docFile_${a.id}").click()'>⬆ Upload</button>
+        <button class="btn btn-out" style="font-size:11px" onclick='loadTenantDocs(${sid})'>📂 Show documents</button>
+      </div>
+      <div id="docList_${a.id}" style="font-size:12px"></div>
+    </div>` : ''}
     <div class="scard" style="margin-bottom:12px">
       <h3><span class="icon">🏠</span> Additional Occupants (not on lease)</h3>
       <p style="font-size:11px;color:var(--mut);margin:-4px 0 8px">Others who will live at the property but do not sign the lease. Informational only — one name per line.</p>
@@ -2947,6 +2959,74 @@ async function saveAdditionalOccupants(id) {
   a.additionalOccupants = val;
   if (a.spId && SP_READY) { await patchSP(a.spId, { AdditionalOccupants: val }); toast('Occupants saved', 'ok'); }
   else toast('Saved', 'ok');
+}
+// ── TENANT DOCUMENT VAULT (Master → Property → Tenant) ───────────────────────
+const DOCS_DRIVE_ID = 'b!a_HuWL_faE2spQrH6spmaNveHlthixJEiVvxPFnBMdQnwauxJfOwSKHW6BBmHtBb';
+const DOCS_MASTER_NAME = 'Tenant Documents';
+function canonAddr(s){
+  const Q=new Set(['ne','nw','se','sw']);
+  return String(s||'').replace(/,?\s*(calgary|alberta|ab|canada)\b.*$/i,'').replace(/\s+/g,' ').trim().split(' ').map(function(w){
+    if(Q.has(w.toLowerCase()))return w.toUpperCase();
+    if(/^[a-z]\d[a-z]$/i.test(w)||/^\d[a-z]\d$/i.test(w))return w.toUpperCase();
+    if(/^\d+(st|nd|rd|th)$/i.test(w))return w.toLowerCase();
+    if(/^\d+$/.test(w))return w;
+    return w.charAt(0).toUpperCase()+w.slice(1).toLowerCase();
+  }).join(' ');
+}
+async function _ensureChild(token, parentId, name){
+  const H={Authorization:'Bearer '+token,'Content-Type':'application/json'};
+  const base='https://graph.microsoft.com/v1.0/drives/'+DOCS_DRIVE_ID;
+  const r=await fetch(base+'/items/'+parentId+'/children',{method:'POST',headers:H,body:JSON.stringify({name:name,folder:{},'@microsoft.graph.conflictBehavior':'fail'})});
+  if(r.ok)return (await r.json()).id;
+  if(r.status===409){ const g=await fetch(base+'/items/'+parentId+'/children?$select=id,name&$top=999',{headers:H}); const k=((await g.json()).value||[]).find(function(x){return x.name===name;}); if(k)return k.id; }
+  throw new Error('folder "'+name+'" failed ('+r.status+')');
+}
+async function _docPropFolder(token, a){
+  const base='https://graph.microsoft.com/v1.0/drives/'+DOCS_DRIVE_ID;
+  const rootId=(await (await fetch(base+'/root?$select=id',{headers:{Authorization:'Bearer '+token}})).json()).id;
+  const masterId=await _ensureChild(token, rootId, DOCS_MASTER_NAME);
+  return await _ensureChild(token, masterId, canonAddr(a.propertyAddress)||'Unknown Property');
+}
+async function uploadTenantDoc(id){
+  const a=apps.find(function(x){return String(x.id)===String(id);}); if(!a)return;
+  const tenant=(document.getElementById('docTenant_'+id)||{}).value||'Tenant';
+  const type=(document.getElementById('docType_'+id)||{}).value||'Document';
+  const input=document.getElementById('docFile_'+id);
+  const file=input&&input.files&&input.files[0]; if(!file){toast('Choose a file first');return;}
+  const token=await getToken(); if(!token)return;
+  toast('Uploading '+type+'…');
+  try{
+    const propId=await _docPropFolder(token,a);
+    const clean=function(s){return String(s||'').replace(/[\\\/:*?"<>|]+/g,' ').replace(/\s+/g,' ').trim();};
+    const tenantId=await _ensureChild(token, propId, clean(tenant)||'Tenant');
+    const ext=(file.name.match(/\.[a-z0-9]+$/i)||[''])[0];
+    const fname=clean(type)+ext;
+    const base='https://graph.microsoft.com/v1.0/drives/'+DOCS_DRIVE_ID;
+    const up=await fetch(base+'/items/'+tenantId+':/'+encodeURIComponent(fname)+':/content',{method:'PUT',headers:{Authorization:'Bearer '+token},body:file});
+    if(!up.ok){console.warn('doc upload',up.status,await up.text());toast('⚠ Upload failed ('+up.status+')');return;}
+    input.value='';
+    toast('✓ '+type+' uploaded for '+tenant,'ok');
+    loadTenantDocs(id);
+  }catch(e){console.warn('uploadTenantDoc',e);toast('⚠ '+e.message);}
+}
+async function loadTenantDocs(id){
+  const a=apps.find(function(x){return String(x.id)===String(id);}); if(!a)return;
+  const el=document.getElementById('docList_'+id); if(!el)return;
+  el.innerHTML='<span style="color:var(--mut)">Loading…</span>';
+  const token=await getToken(); if(!token)return;
+  try{
+    const base='https://graph.microsoft.com/v1.0/drives/'+DOCS_DRIVE_ID;
+    const H={Authorization:'Bearer '+token};
+    const findChild=async function(pid,name){const g=await fetch(base+'/items/'+pid+'/children?$select=id,name&$top=999',{headers:H});return ((await g.json()).value||[]).find(function(x){return x.name===name;});};
+    const rootId=(await (await fetch(base+'/root?$select=id',{headers:H})).json()).id;
+    const master=await findChild(rootId,DOCS_MASTER_NAME);
+    const prop=master&&await findChild(master.id,canonAddr(a.propertyAddress));
+    if(!prop){el.innerHTML='<span style="color:var(--mut)">No documents uploaded yet.</span>';return;}
+    const tenants=(await (await fetch(base+'/items/'+prop.id+'/children?$expand=children($select=name,webUrl)&$select=id,name',{headers:H})).json()).value||[];
+    let html='';
+    for(const t of tenants){ const files=t.children||[]; html+='<div style="margin-top:5px"><strong>'+t.name+'</strong>'+(files.length?files.map(function(f){return ' · <a href="'+f.webUrl+'" target="_blank" rel="noopener noreferrer">'+f.name+'</a>';}).join(''):' <span style="color:var(--mut)">(empty)</span>')+'</div>'; }
+    el.innerHTML=html||'<span style="color:var(--mut)">No documents uploaded yet.</span>';
+  }catch(e){console.warn('loadTenantDocs',e);el.innerHTML='<span style="color:#c0392b">Could not load documents.</span>';}
 }
 
 // PM-only: save monthly rent + PM notes inline (no edit mode required for PMs)
