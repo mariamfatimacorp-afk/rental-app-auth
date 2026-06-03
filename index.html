@@ -3357,13 +3357,12 @@ async function generateLeaseFromTemplate(d) {
   // Values inserted into SDTs stay bold via existing <w:rPr><w:b/><w:bCs/> in the template runs.
   docXml = docXml.replace(/<w:highlight\s+w:val="(?:yellow|lightGray)"\s*\/>/g, '');
 
-   const __extra = buildAdditionalTerms(d);
+    const __extra = buildAdditionalTerms(d);
   if (__extra.length) {
-    const __inj = '<w:p><w:pPr><w:spacing w:after="120" w:line="259" w:lineRule="auto"/><w:ind w:left="0" w:firstLine="0"/></w:pPr><w:r><w:rPr><w:b/><w:bCs/></w:rPr><w:t xml:space="preserve">ADDITIONAL PROPERTY-SPECIFIC TERMS:</w:t></w:r></w:p>'
-      + __extra.map((t,i)=>'<w:p><w:pPr><w:spacing w:after="120" w:line="259" w:lineRule="auto"/><w:ind w:left="0" w:firstLine="0"/></w:pPr><w:r><w:t xml:space="preserve">'+(31+i)+'. '+xmlEsc(t)+'</w:t></w:r></w:p>').join('');
+    const __inj = '<w:p>…<w:r><w:rPr><w:b/><w:bCs/></w:rPr><w:t xml:space="preserve">ADDITIONAL PROPERTY-SPECIFIC TERMS:</w:t></w:r></w:p>'
+      + __extra.map((t,i)=>'<w:p>…<w:r><w:t xml:space="preserve">'+(31+i)+'. '+xmlEsc(t)+'</w:t></w:r></w:p>').join('');
     docXml = docXml.replace(/(<w:p\b[^>]*>)(\s*<w:r>(?:<w:lastRenderedPageBreak\/>)?<w:t[^>]*>IN WITNESS WHEREOF)/, __inj + '$1$2');
   }
- 
   zip.file('word/document.xml', docXml);
 
   const content = zip.generate({
