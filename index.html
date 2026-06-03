@@ -3429,7 +3429,13 @@ async function saveLeaseRecord(d) {
     const item = await r.json();
     leaseSaved = true;
     d.app.leaseRecordId = item.id;
-    if (item.webUrl) patchSP(d.app.spId, { LeaseLink: item.webUrl }).catch(()=>{});
+     if (item.webUrl) patchSP(d.app.spId, { LeaseLink: item.webUrl }).catch(()=>{});
+    // persist additional tenants (beyond primary + co-applicant) back to the application list
+    try {
+      const primary = [d.app.name, d.app.coName].filter(Boolean).map(x=>x.toLowerCase());
+      const extras = d.tenants.filter(t => !primary.includes(t.toLowerCase())).join('\n');
+      if (extras !== (d.app.additionalTenants || '')) { d.app.additionalTenants = extras; patchSP(d.app.spId, { AdditionalTenants: extras }).catch(()=>{}); }
+    } catch(_){}
     toast('✓ Lease recorded (Draft) in SharePoint', 'ok');
   } catch(e) { console.warn('saveLeaseRecord error', e); }
 }
