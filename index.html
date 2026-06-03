@@ -1202,6 +1202,7 @@ function mapSPItem(item) {
     utilityClause: s('UtilityClause') || '',
     signedLeaseLink: s('SignedLeaseLink') || '',
     additionalTenants: s('AdditionalTenants') || '',
+    additionalOccupants: s('AdditionalOccupants') || '',
     leaseLink: s('LeaseLink') || '',
     pmEmail, propertyManager: pmDisplay || PM_NAMES[pmEmail] || '',
     propertyAddress: s('field_5') || titleAddress,
@@ -1944,12 +1945,18 @@ function selApp(id) {
       </div>
     </div>
 
-       ${(isAdmin || isPM) ? `
+          ${(isAdmin || isPM) ? `
     <div class="scard" style="margin-bottom:12px">
-      <h3><span class="icon">👥</span> Additional Tenants / Cosigners</h3>
-      <p style="font-size:11px;color:var(--mut);margin:-4px 0 8px">Extra adults to appear on the lease, beyond the primary applicant and co-applicant. One name per line.</p>
+      <h3><span class="icon">✍️</span> Cosigners (sign the lease)</h3>
+      <p style="font-size:11px;color:var(--mut);margin:-4px 0 8px">People who will sign the lease, beyond the primary applicant and co-applicant. One name per line — each is added to the lease with their own signature line.</p>
       <textarea class="notes" id="addlTenants_${a.id}" placeholder="e.g.&#10;Jane Smith&#10;Robert Lee">${a.additionalTenants||''}</textarea>
-      <button class="btn btn-out" style="font-size:11px;margin-top:7px" onclick='saveAdditionalTenants(${sid})'>Save Additional Tenants</button>
+      <button class="btn btn-out" style="font-size:11px;margin-top:7px" onclick='saveAdditionalTenants(${sid})'>Save Cosigners</button>
+    </div>
+    <div class="scard" style="margin-bottom:12px">
+      <h3><span class="icon">🏠</span> Additional Occupants (not on lease)</h3>
+      <p style="font-size:11px;color:var(--mut);margin:-4px 0 8px">Others who will live at the property but do not sign the lease. Informational only — one name per line.</p>
+      <textarea class="notes" id="occupants_${a.id}" placeholder="e.g.&#10;Varun Rao&#10;Child name">${a.additionalOccupants||''}</textarea>
+      <button class="btn btn-out" style="font-size:11px;margin-top:7px" onclick='saveAdditionalOccupants(${sid})'>Save Occupants</button>
     </div>` : ''}
 
     <!-- ── Notes + PDF link ── -->
@@ -2930,7 +2937,15 @@ async function saveAdditionalTenants(id) {
   if (!a) return;
   const val = (document.getElementById('addlTenants_' + id)?.value || '').trim();
   a.additionalTenants = val;
-  if (a.spId && SP_READY) { await patchSP(a.spId, { AdditionalTenants: val }); toast('Additional tenants saved', 'ok'); }
+  if (a.spId && SP_READY) { await patchSP(a.spId, { AdditionalTenants: val }); toast('Cosigners saved', 'ok'); }
+  else toast('Saved', 'ok');
+}
+async function saveAdditionalOccupants(id) {
+  const a = apps.find(x => String(x.id) === String(id));
+  if (!a) return;
+  const val = (document.getElementById('occupants_' + id)?.value || '').trim();
+  a.additionalOccupants = val;
+  if (a.spId && SP_READY) { await patchSP(a.spId, { AdditionalOccupants: val }); toast('Occupants saved', 'ok'); }
   else toast('Saved', 'ok');
 }
 
@@ -3004,15 +3019,23 @@ function saveEdit(id) {
   renderList(); // update sidebar card in case name/PM changed
   selApp(id);
    if (a.spId && SP_READY) {
-    patchSP(a.spId, {
-      LandlordName: a.landlordName || '',
-      LandlordAddress: a.landlordAddress || '',
-      LandlordEmail: a.landlordEmail || '',
-      LandlordPhone: a.landlordPhone || '',
-      MonthlyRent: Number(a.monthlyRent) || 0,
-      PMNotes: a.pmNotes || ''
-    }).catch(() => {});
-    if (a.utilityClause) patchSP(a.spId, { UtilityClause: a.utilityClause }).catch(() => {});
+    const splitName = full => { const p=String(full||'').trim().split(/\s+/).filter(Boolean); return p.length<=1?{f:p[0]||'',m:'',l:''}:p.length===2?{f:p[0],m:'',l:p[1]}:{f:p[0],m:p.slice(1,-1).join(' '),l:p[p.length-1]}; };
+    const sp = {
+      LandlordName: a.landlordName || '', LandlordAddress: a.landlordAddress || '',
+      LandlordEmail: a.landlordEmail || '', LandlordPhone: a.landlordPhone || '',
+      MonthlyRent: Number(a.monthlyRent) || 0, PMNotes: a.pmNotes || ''
+    };
+    if (a.utilityClause) sp.UtilityClause = a.utilityClause;
+    if (updates.name)   { const n=splitName(a.name);   sp.field_11=n.f; sp.field_12=n.m; sp.field_13=n.l; }
+    if (updates.coName) { const n=splitName(a.coName); sp.field_20=n.f; sp.field_21=n.m; sp.field_22=n.l; }
+    if (updates.email)            sp.field_16 = a.email;
+    if (updates.phone1)           sp.field_17 = a.phone1;
+    if (updates.phone2)           sp.field_18 = a.phone2;
+    if (updates.currentAddress)   sp.field_15 = a.currentAddress;
+    if (updates.coEmail)          sp.field_25 = a.coEmail;
+    if (updates.coPhone1)         sp.field_26 = a.coPhone1;
+    if (updates.coCurrentAddress) sp.field_24 = a.coCurrentAddress;
+    patchSP(a.spId, sp).catch(() => {});
   }
   toast('Application data saved ✓', 'ok');
 }
