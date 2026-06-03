@@ -566,13 +566,18 @@ Please send all documents at your earliest convenience.
             </div>
             <div class="fg">
               <label>Garbage Bins</label>
-              <select id="f_garbage">
+                            <select id="f_garbage">
                 <option value="tenant">Tenant</option>
                 <option value="landlord">Landlord</option>
                 <option value="shared">Shared</option>
                 <option value="na">Not Applicable</option>
               </select>
             </div>
+          </div>
+          <div class="ftitle" style="margin-top:14px">Property-Specific Clauses (optional)</div>
+          <div class="fg full">
+            <label>Custom terms for this property — one clause per line. They appear in bold under "Additional Property-Specific Terms," and you'll review them before the lease generates.</label>
+            <textarea id="f_custom_clauses" rows="4" placeholder="e.g. Tenant is responsible for replacing furnace filters every three months." style="padding:8px 10px;border:1.5px solid var(--bdr);border-radius:6px;font-family:inherit;font-size:13px;color:var(--txt);resize:vertical"></textarea>
           </div>
         </div>
       </div>
@@ -3191,10 +3196,11 @@ function getLeaseData() {
     toast('⚠ Required fields missing: ' + missing.map(f => f.label).join(', '));
     return null;
   }
+  const customClauses = (document.getElementById('f_custom_clauses')?.value || '').trim();
   return { addr, utype, appliances, agdate, start, end, rent, dep, late, rerent,
     tenants: [t1, t2, t3].filter(Boolean), occ, land, laddr, lemail, lphone, app: leaseApp,
     utils, utilCustom, accParking, accBackyard, accGarage, accLaundry, accStorage, entrance,
-    pets, petDesc, snow, yardMaint, garbage };
+    pets, petDesc, snow, yardMaint, garbage, customClauses };
 }
 
 // ── DOCX GENERATION (template-based via content control fill) ────────────────
@@ -3205,7 +3211,8 @@ async function doGenDOCX() {
   }
   let d;
   try { d = getLeaseData(); } catch(e) { toast('⚠ Form error: ' + e.message); return; }
-  if (!d) return;
+    if (!d) return;
+  if (!confirmAdditionalTerms(d)) return;
 
   // Prefer template-based generation (requires only PizZip)
   if (typeof PizZip !== 'undefined') {
@@ -3238,6 +3245,30 @@ async function doGenDOCX() {
     console.error('DOCX fallback error:', e);
     toast('⚠ Word generation failed: ' + e.message);
   }
+}
+
+// ── ADDITIONAL TERMS (wizard answers + custom clauses) ───────────────────────
+function xmlEsc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function buildAdditionalTerms(d) {
+  const terms = [];
+  const accTxt = (area,val) => ({upper:`The ${area} is for the exclusive use of the upstairs tenant only.`,basement:`The ${area} is for the exclusive use of the basement tenant only.`,shared:`The ${area} is shared between the upstairs and basement tenants.`,house:`The ${area} is included with the leased premises for the Tenant's exclusive use.`,none:`The Tenant does not have access to the ${area} without the prior written approval of the Landlord.`,na:''}[val]||'');
+  [['parking and driveway',d.accParking],['backyard',d.accBackyard],['garage',d.accGarage],['laundry facilities',d.accLaundry],['storage area',d.accStorage]].forEach(([a,v])=>{const t=accTxt(a,v);if(t)terms.push(t);});
+  if(d.entrance && d.entrance!=='na') terms.push(`The Tenant's designated entrance to the premises is the ${d.entrance} entrance.`);
+  if(d.pets==='yes' && d.petDesc) terms.push(`The Tenant is permitted to keep ${d.petDesc} in the premises, subject to keeping the premises clean and free of damage, controlling noise and odours, and complying with all applicable City of Calgary bylaws.`);
+  const snow={both:'The upstairs tenant is responsible for clearing snow from the front of the house including the city sidewalk; the basement tenant is responsible for clearing snow from the basement entrance to the front of the house.',upper:'The upstairs tenant is responsible for clearing snow from the front of the house including the city sidewalk.',basement:'The basement tenant is responsible for clearing snow from the basement entrance to the front of the house.',tenant:'The Tenant is responsible for clearing snow from all walkways, sidewalks, and the driveway.',landlord:'Snow removal is the responsibility of the Landlord.'}[d.snow];
+  if(snow)terms.push(snow);
+  const yard={tenant:'Yard maintenance, including lawn mowing and general upkeep, is the responsibility of the Tenant.',landlord:'Yard maintenance is the responsibility of the Landlord.',shared:'Yard maintenance is shared between the tenants as directed by the Landlord.'}[d.yardMaint];
+  if(yard)terms.push(yard);
+  const garbage={tenant:'The Tenant is responsible for managing garbage and recycling bins, including placing them out and bringing them in on collection days.',landlord:'Garbage and recycling bin management is the responsibility of the Landlord.',shared:'Garbage and recycling bin management is shared between the tenants.'}[d.garbage];
+  if(garbage)terms.push(garbage);
+  if(d.customClauses) d.customClauses.split('\n').map(s=>s.trim()).filter(Boolean).forEach(c=>terms.push(c));
+  return terms;
+}
+function confirmAdditionalTerms(d) {
+  const terms = buildAdditionalTerms(d);
+  if(!terms.length) return true;
+  const list = terms.map((t,i)=>`${31+i}. ${t}`).join('\n\n');
+  return confirm('These PROPERTY-SPECIFIC TERMS will be added to the lease (in bold), before the signatures:\n\n'+list+'\n\nGenerate the lease with these terms?');
 }
 
 // ── TEMPLATE-BASED LEASE GENERATION (Word content controls) ──────────────────
@@ -3306,6 +3337,18 @@ async function generateLeaseFromTemplate(d) {
   // Values inserted into SDTs stay bold via existing <w:rPr><w:b/><w:bCs/> in the template runs.
   docXml = docXml.replace(/<w:highlight\s+w:val="(?:yellow|lightGray)"\s*\/>/g, '');
 
+   const __extra = buildAdditionalTerms(d);
+  if (__extra.length) {
+    const __inj = '<w:p><w:pPr><w:spacing w:after="120" w:line="259" w:lineRule="auto"/><w:ind w:left="0" w:firstLine="0"/></w:pPr><w:r><w:rPr><w:b/><w:bCs/></w:rPr><w:t xml:space="preserve">ADDITIONAL PROPERTY-SPECIFIC TERMS:</w:t></w:r></w:p>'
+      + __extra.map((t,i)=>'<w:p><w:pPr><w:spacing w:after="120" w:line="259" w:lineRule="auto"/><w:ind w:left="0" w:firstLine="0"/></w:pPr><w:r><w:t xml:space="preserve">'+(31+i)+'. '+xmlEsc(t)+'</w:t></w:r></w:p>').join('');
+    docXml = docXml.replace(/(<w:p\b[^>]*>)(\s*<w:r>(?:<w:lastRenderedPageBreak\/>)?<w:t[^>]*>IN WITNESS WHEREOF)/, __inj + '$1$2');
+  }
+  const __extra = buildAdditionalTerms(d);
+  if (__extra.length) {
+    const __inj = '<w:p><w:pPr><w:spacing w:after="120" w:line="259" w:lineRule="auto"/><w:ind w:left="0" w:firstLine="0"/></w:pPr><w:r><w:rPr><w:b/><w:bCs/></w:rPr><w:t xml:space="preserve">ADDITIONAL PROPERTY-SPECIFIC TERMS:</w:t></w:r></w:p>'
+      + __extra.map((t,i)=>'<w:p><w:pPr><w:spacing w:after="120" w:line="259" w:lineRule="auto"/><w:ind w:left="0" w:firstLine="0"/></w:pPr><w:r><w:rPr><w:b/><w:bCs/></w:rPr><w:t xml:space="preserve">'+(31+i)+'. '+xmlEsc(t)+'</w:t></w:r></w:p>').join('');
+    docXml = docXml.replace(/(<w:p\b[^>]*>)(\s*<w:r>(?:<w:lastRenderedPageBreak\/>)?<w:t[^>]*>IN WITNESS WHEREOF)/, __inj + '$1$2');
+  }
   zip.file('word/document.xml', docXml);
 
   const content = zip.generate({
@@ -3445,7 +3488,7 @@ function buildTemplateReplacements(d) {
     // [4]  Primary Name AND Cosigner Name
     { text: 'Primary Name AND Cosigner Name',  value: tenantNames },
     // [5]  Address of property
-    { text: 'Address of property',             value: d.addr },
+    { text: 'Address of property',             value: d.addr + (d.utype==='upper'?' (Upper Unit)':d.utype==='basement'?' (Basement Unit)':' (Entire House)') },
     // [6]  Day of move-in date
     { text: 'Day of Date occupancy desired',   value: day(startDt) },
     // [7]  Month of move-in date
@@ -3565,7 +3608,8 @@ function buildLeaseTemplateData(d) {
 function doGenPDF() {
   let d;
   try { d = getLeaseData(); } catch(e) { toast('⚠ Form error: ' + e.message); return; }
-  if (!d) return;
+   if (!d) return;
+  if (!confirmAdditionalTerms(d)) return;
   if (typeof window.jspdf === 'undefined') {
     toast('⚠ PDF library not loaded yet — please wait a moment and try again');
     return;
