@@ -3036,9 +3036,18 @@ async function loadTenantDocs(id){
     if(!tenancy){el.innerHTML='<span style="color:var(--mut)">No documents uploaded yet.</span>';return;}
     const tenants=((await (await fetch(base+'/items/'+tenancy.id+'/children?$select=id,name&$top=999',{headers:H})).json()).value)||[];
     let html='';
-    for(const t of tenants){ const files=((await (await fetch(base+'/items/'+t.id+'/children?$select=name,webUrl&$top=999',{headers:H})).json()).value)||[]; html+='<div style="margin-top:5px"><strong>'+t.name+'</strong>'+(files.length?files.map(function(f){return ' · <a href="'+f.webUrl+'" target="_blank" rel="noopener noreferrer">'+f.name+'</a>';}).join(''):' <span style="color:var(--mut)">(empty)</span>')+'</div>'; }
+    for(const t of tenants){ const files=((await (await fetch(base+'/items/'+t.id+'/children?$select=id,name,webUrl&$top=999',{headers:H})).json()).value)||[]; html+='<div style="margin-top:5px"><strong>'+t.name+'</strong>'+(files.length?files.map(function(f){return ' · <a href="'+f.webUrl+'" target="_blank" rel="noopener noreferrer">'+f.name+'</a> <span onclick="deleteTenantDoc(\''+f.id+'\','+id+')" style="cursor:pointer;color:#c0392b" title="Delete document">🗑</span>';}).join(''):' <span style="color:var(--mut)">(empty)</span>')+'</div>'; }
     el.innerHTML=html||'<span style="color:var(--mut)">No documents uploaded yet.</span>';
   }catch(e){console.warn('loadTenantDocs',e);el.innerHTML='<span style="color:#c0392b">Could not load documents.</span>';}
+}
+async function deleteTenantDoc(fileId, id){
+  if(!confirm('Delete this document from the folder? This cannot be undone.'))return;
+  const token=await getToken(); if(!token)return;
+  try{
+    const r=await fetch('https://graph.microsoft.com/v1.0/drives/'+DOCS_DRIVE_ID+'/items/'+fileId,{method:'DELETE',headers:{Authorization:'Bearer '+token}});
+    if(r.ok||r.status===204){toast('Document deleted','ok');loadTenantDocs(id);}
+    else{console.warn('delete doc',r.status,await r.text());toast('⚠ Delete failed ('+r.status+')');}
+  }catch(e){console.warn('deleteTenantDoc',e);toast('⚠ '+e.message);}
 }
 
 // PM-only: save monthly rent + PM notes inline (no edit mode required for PMs)
