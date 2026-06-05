@@ -3382,7 +3382,7 @@ function getLeaseData() {
   }
   const customClauses = (document.getElementById('f_custom_clauses')?.value || '').trim();
   return { addr, utype, appliances, agdate, start, end, rent, dep, late, rerent,
-       tenants: (() => { const base=[t1,t2,t3].filter(Boolean); ((leaseApp&&leaseApp.additionalTenants)||'').split('\n').map(s=>s.trim()).filter(Boolean).forEach(n=>{ if(!base.some(x=>x.toLowerCase()===n.toLowerCase())) base.push(n); }); return base; })(), occ, land, laddr, lemail, lphone, app: leaseApp,
+       tenants: (() => { const base=[t1,t2,t3].filter(Boolean); const add=n=>{ n=String(n||'').trim(); if(n && !base.some(x=>x.toLowerCase()===n.toLowerCase())) base.push(n); }; ((leaseApp&&leaseApp.additionalTenants)||'').split('\n').forEach(add); ((leaseApp&&leaseApp.cosigners)||[]).forEach(c=>add([c.cosigner_first_name,c.cosigner_middle_name,c.cosigner_last_name].filter(Boolean).join(' '))); return base; })(), occ, land, laddr, lemail, lphone, app: leaseApp,
     utils, utilCustom, accParking, accBackyard, accGarage, accLaundry, accStorage, entrance,
     pets, petDesc, snow, yardMaint, garbage, customClauses };
 }
