@@ -1263,6 +1263,7 @@ function mapSPItem(item) {
     ref2Name: s('field_64'), ref2Rel: s('field_65'), ref2Phone: formatPhone(s('field_66')) || s('field_66'),
     ref3Name: s('field_67'), ref3Rel: s('field_68'), ref3Phone: formatPhone(s('field_69')) || s('field_69'),
     emgName: s('field_70'), emgAddress: s('field_71'), emgPhone: formatPhone(s('field_72')) || s('field_72'), emgRel: s('field_73'),
+    cosigners: (() => { try { const arr = JSON.parse(s('CosignersJSON') || '[]'); return Array.isArray(arr) ? arr : []; } catch(e) { return []; } })(),
     pdfParsed: true, parseVersion: PARSE_VERSION, pdfRawText: '', pdfAnnFields: '',
   };
 }
@@ -1722,6 +1723,39 @@ function selApp(id) {
     return `<div class="frow"><span class="flbl">Reference ${n}</span><span class="fval">${name}${rel?' · '+rel:''}${dispPhone?' · '+dispPhone:''}</span></div>`;
   }
 
+  // ── Helper: structured Co-Signer cards from CosignersJSON ────────────────
+  function cosignerCards() {
+    const list = Array.isArray(a.cosigners) ? a.cosigners : [];
+    if (!list.length) return '';
+    const dt = v => v ? String(v).split('T')[0] : '';
+    const money = v => { const n = parseFloat(v); return n ? '$' + n.toLocaleString() : (v || ''); };
+    return list.map((c, i) => {
+      const nm = [c.cosigner_first_name, c.cosigner_middle_name, c.cosigner_last_name].map(x => (x || '').trim()).filter(Boolean).join(' ');
+      return `
+    <div class="secgrid" style="margin-bottom:12px">
+      <div class="scard">
+        <h3><span class="icon">✍️</span> Co-Signer ${i + 1} — Personal</h3>
+        ${frow('Full Legal Name', nm)}
+        ${frow('Date of Birth', dt(c.cosigner_date_of_birth))}
+        ${frow('Email', c.cosigner_email)}
+        ${frow('Phone (Cell)', formatPhone(c.cosigner_phone_1) || c.cosigner_phone_1)}
+        ${frow('Phone (Home / Alt)', formatPhone(c.cosigner_phone_2) || c.cosigner_phone_2)}
+        ${frow('Current Residential Address', c.cosigner_current_address)}
+      </div>
+      <div class="scard">
+        <h3><span class="icon">💼</span> Co-Signer ${i + 1} — Employment</h3>
+        ${frow('Name of Employer', c.cosigner_current_employer)}
+        ${frow('Employer Address', c.cosigner_employer_address)}
+        ${frow('Position / Title', c.cosigner_job_position)}
+        ${frow('Length of Employment', c.cosigner_length_of_employment)}
+        ${frow('Monthly Gross Income ($)', money(c.cosigner_monthly_wage))}
+        ${frow('Supervisor Name', c.cosigner_supervisor_name)}
+        ${frow('Supervisor Phone', formatPhone(c.cosigner_supervisor_phone) || c.cosigner_supervisor_phone)}
+      </div>
+    </div>`;
+    }).join('');
+  }
+
   d.innerHTML = `
     <!-- PDF scan banner -->
     <div id="pdfScanStatus" style="display:${(a.pdfParsed && a.parseVersion===PARSE_VERSION)?'none':'flex'};align-items:center;gap:10px;
@@ -1864,7 +1898,8 @@ function selApp(id) {
       </div>
     </div>
 
-    <!-- ── Row 3: Co-Applicant + Co-Employment (always shown) ── -->
+    <!-- ── Row 3: Co-Signers (structured from CosignersJSON) — legacy Co-Applicant fallback ── -->
+    ${(a.cosigners && a.cosigners.length) ? cosignerCards() : `
     <div class="secgrid" style="margin-bottom:12px">
       <div class="scard">
         <h3><span class="icon">👥</span> Co-Applicant
@@ -1889,7 +1924,7 @@ function selApp(id) {
         ${frow('Supervisor Phone', a.coEmpSupPhone, '', 'coEmpSupPhone')}
         ${farea('Other Income / Sources', a.coEmpOther, 'coEmpOther')}
       </div>
-    </div>
+    </div>`}
 
     <!-- ── Row 4: Previous Tenancy | Credit History ── -->
     <div class="secgrid" style="margin-bottom:12px">
