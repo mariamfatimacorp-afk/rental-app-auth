@@ -3673,6 +3673,17 @@ async function generateLeaseFromTemplate(d) {
       + __extra.map((t,i)=>'<w:p>…<w:r><w:t xml:space="preserve">'+(31+i)+'. '+xmlEsc(t)+'</w:t></w:r></w:p>').join('');
     docXml = docXml.replace(/(<w:p\b[^>]*>)(\s*<w:r>(?:<w:lastRenderedPageBreak\/>)?<w:t[^>]*>IN WITNESS WHEREOF)/, __inj + '$1$2');
   }
+  // ── Tenant signature blocks: one labeled signature line per signer (cosigners included) ──
+  {
+    const sigPpr = '<w:pPr><w:spacing w:after="0" w:line="259" w:lineRule="auto"/><w:ind w:left="0" w:firstLine="0"/></w:pPr>';
+    const esc = s => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    const sigBlocks = (d.tenants||[]).map(nm =>
+        `<w:p>${sigPpr}<w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve">${esc(nm)}</w:t></w:r></w:p>`
+      + `<w:p>${sigPpr}<w:r><w:t xml:space="preserve">______________________________          Date: __________________</w:t></w:r></w:p>`
+      + `<w:p><w:pPr><w:spacing w:after="240" w:line="259" w:lineRule="auto"/><w:ind w:left="0" w:firstLine="0"/></w:pPr><w:r><w:t>Signature of the Tenant</w:t></w:r></w:p>`
+    ).join('');
+    docXml = docXml.replace('[[TENANT_SIGNATURES]]', '</w:t></w:r></w:p>' + sigBlocks + '<w:p><w:r><w:t>');
+  }
   zip.file('word/document.xml', docXml);
 
   const content = zip.generate({
