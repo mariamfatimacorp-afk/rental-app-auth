@@ -606,8 +606,10 @@ Please send all documents at your earliest convenience.
           <div id="lease-alert"></div>
           <div class="fgrid">
             <div class="fg full"><label>Tenant 1 (Primary Applicant) *</label><input id="f_t1" type="text"></div>
-            <div class="fg full"><label>Tenant 2 (Co-Applicant)</label><input id="f_t2" type="text" placeholder="Leave blank if none"></div>
-            <div class="fg full"><label>Tenant 3 (Additional Adult)</label><input id="f_t3" type="text" placeholder="Leave blank if none"></div>
+            <div class="fg full"><label>Additional Signers — co-applicant &amp; cosigners (each gets its own signature block)</label>
+              <div id="f_signers"></div>
+              <button type="button" class="btn btn-out" style="font-size:11px;margin-top:4px" onclick="addSignerRow('')">+ Add signer</button>
+            </div>
             <div class="fg"><label>Max Occupants</label><input id="f_occ" type="number" value="4" min="1" max="15"></div>
             <div class="fg"><label>Landlord Name/Company</label><input id="f_land" type="text" value="Lasi P. Management"></div>
             <div class="fg full"><label>Landlord Address</label><input id="f_laddr" type="text" value="156 Coral Springs Landing NE, Calgary, Alberta"></div>
@@ -3212,8 +3214,15 @@ function openModal(id) {
   document.getElementById('f_addr').value = /calgary|alberta/i.test(rawAddr)
     ? rawAddr : rawAddr + ', Calgary, Alberta';
   document.getElementById('f_t1').value = leaseApp.name;
-  document.getElementById('f_t2').value = leaseApp.coName || '';
-   document.getElementById('f_t3').value = (((leaseApp.additionalTenants)||'').split('\n').map(s=>s.trim()).filter(Boolean))[0] || '';
+  (function(){
+    const seen = [String(leaseApp.name||'').trim().toLowerCase()];
+    const names = [];
+    const add = n => { n = String(n||'').trim(); const k = n.toLowerCase(); if (n && !seen.includes(k)) { seen.push(k); names.push(n); } };
+    add(leaseApp.coName);
+    ((leaseApp.cosigners)||[]).forEach(c => add([c.cosigner_first_name,c.cosigner_middle_name,c.cosigner_last_name].filter(Boolean).join(' ')));
+    ((leaseApp.additionalTenants)||'').split('\n').forEach(add);
+    renderSigners(names);
+  })();
   document.getElementById('f_occ').value = leaseApp.maxOccupants;
   // Pre-fill landlord / rent from PM section if set
   if (leaseApp.landlordName)    document.getElementById('f_land').value   = leaseApp.landlordName;
@@ -3311,6 +3320,31 @@ function setUnitDefaults() {
   }
 }
 
+function renderSigners(names) {
+  const box = document.getElementById('f_signers');
+  if (!box) return;
+  box.innerHTML = '';
+  (names || []).forEach(n => addSignerRow(n));
+}
+function addSignerRow(value) {
+  const box = document.getElementById('f_signers');
+  if (!box) return;
+  const row = document.createElement('div');
+  row.className = 'signer-row';
+  row.style.cssText = 'display:flex;gap:6px;align-items:center;margin-bottom:6px';
+  const inp = document.createElement('input');
+  inp.type = 'text'; inp.className = 'signer-input'; inp.value = value || '';
+  inp.placeholder = 'Signer full name';
+  inp.style.cssText = 'flex:1;padding:8px;border:1px solid var(--bdr);border-radius:6px;font-size:13px';
+  const btn = document.createElement('button');
+  btn.type = 'button'; btn.textContent = '✕'; btn.title = 'Remove signer';
+  btn.className = 'btn btn-out'; btn.style.cssText = 'font-size:11px;padding:4px 9px';
+  btn.onclick = () => row.remove();
+  row.appendChild(inp); row.appendChild(btn); box.appendChild(row);
+}
+function getSigners() {
+  return [...document.querySelectorAll('#f_signers .signer-input')].map(i => i.value.trim()).filter(Boolean);
+}
 function getLeaseData() {
   const addr  = document.getElementById('f_addr').value.trim();
   const utype = document.querySelector('input[name="utype"]:checked')?.value || 'upper';
@@ -3323,8 +3357,7 @@ function getLeaseData() {
   const late   = parseFloat(document.getElementById('f_late').value) || 20;
   const rerent = parseFloat(document.getElementById('f_rerent').value) || 2000;
   const t1     = document.getElementById('f_t1').value.trim();
-  const t2     = document.getElementById('f_t2').value.trim();
-  const t3     = document.getElementById('f_t3').value.trim();
+  const extraSigners = getSigners();
   const occ    = document.getElementById('f_occ').value;
   const land   = document.getElementById('f_land').value.trim();
   const laddr  = document.getElementById('f_laddr').value.trim();
@@ -3382,7 +3415,7 @@ function getLeaseData() {
   }
   const customClauses = (document.getElementById('f_custom_clauses')?.value || '').trim();
   return { addr, utype, appliances, agdate, start, end, rent, dep, late, rerent,
-       tenants: (() => { const base=[t1,t2,t3].filter(Boolean); const add=n=>{ n=String(n||'').trim(); if(n && !base.some(x=>x.toLowerCase()===n.toLowerCase())) base.push(n); }; ((leaseApp&&leaseApp.additionalTenants)||'').split('\n').forEach(add); ((leaseApp&&leaseApp.cosigners)||[]).forEach(c=>add([c.cosigner_first_name,c.cosigner_middle_name,c.cosigner_last_name].filter(Boolean).join(' '))); return base; })(), occ, land, laddr, lemail, lphone, app: leaseApp,
+       tenants: (() => { const base=[t1].filter(Boolean); const add=n=>{ n=String(n||'').trim(); if(n && !base.some(x=>x.toLowerCase()===n.toLowerCase())) base.push(n); }; (extraSigners||[]).forEach(add); return base; })(), occ, land, laddr, lemail, lphone, app: leaseApp,
     utils, utilCustom, accParking, accBackyard, accGarage, accLaundry, accStorage, entrance,
     pets, petDesc, snow, yardMaint, garbage, customClauses };
 }
