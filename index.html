@@ -610,6 +610,12 @@ Please send all documents at your earliest convenience.
               <div id="f_signers"></div>
               <button type="button" class="btn btn-out" style="font-size:11px;margin-top:4px" onclick="addSignerRow('')">+ Add signer</button>
             </div>
+            <div class="fg full" style="margin-top:6px;padding:10px;border:1px solid var(--bdr);border-radius:8px;background:var(--bg)">
+              <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;font-weight:700;font-size:13px;margin:0">
+                <input type="checkbox" id="f_idverified" style="margin-top:3px;width:16px;height:16px">
+                <span>⚠ I confirm I have verified every signer's full legal name listed above against their government-issued photo ID. <span style="color:var(--mut);font-weight:400">(Required — the lease will not generate until this is checked.)</span></span>
+              </label>
+            </div>
             <div class="fg"><label>Max Occupants</label><input id="f_occ" type="number" value="4" min="1" max="15"></div>
             <div class="fg"><label>Landlord Name/Company</label><input id="f_land" type="text" value="Lasi P. Management"></div>
             <div class="fg full"><label>Landlord Address</label><input id="f_laddr" type="text" value="156 Coral Springs Landing NE, Calgary, Alberta"></div>
@@ -3224,6 +3230,7 @@ function openModal(id) {
     renderSigners(names);
   })();
   document.getElementById('f_occ').value = leaseApp.maxOccupants;
+  { const __idv = document.getElementById('f_idverified'); if (__idv) __idv.checked = false; }
   // Pre-fill landlord / rent from PM section if set
   if (leaseApp.landlordName)    document.getElementById('f_land').value   = leaseApp.landlordName;
   if (leaseApp.landlordAddress) document.getElementById('f_laddr').value  = leaseApp.landlordAddress;
@@ -3411,6 +3418,11 @@ function getLeaseData() {
     const firstEl = document.getElementById(missing[0].id);
     if (firstEl) firstEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
     toast('⚠ Required fields missing: ' + missing.map(f => f.label).join(', '));
+    return null;
+  }
+  if (!document.getElementById('f_idverified')?.checked) {
+    document.getElementById('f_idverified')?.closest('.fg')?.scrollIntoView({ behavior:'smooth', block:'center' });
+    toast('⚠ Please confirm you have verified all signer names against their photo ID before generating the lease.');
     return null;
   }
   const customClauses = (document.getElementById('f_custom_clauses')?.value || '').trim();
