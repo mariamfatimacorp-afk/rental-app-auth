@@ -985,7 +985,7 @@ async function loadApplications() {
   // PMs never access the PDFs folder (security: they should not see other PMs'
   // raw files). All app data is loaded from _crm_meta.json which only admins
   // can write to and which lives in a separate folder PMs can access read-only.
-  if (currentUser?.role === 'pm') {
+  if (false && currentUser?.role === 'pm') { // disabled: PMs now read the live list directly (Phase 2 members)
     try {
       const token = await getToken();
       const sharedMeta = await loadSharedMeta(token);
