@@ -1467,8 +1467,8 @@ function getVisibleApps() {
   // ── Sort ──────────────────────────────────────────────────────────────────
   const sortBy = document.getElementById('sortBy')?.value || 'date';
   const dir = sortDir === 'asc' ? 1 : -1;
-  const STATUS_ORDER = { n  const STATUS_ORDER = { new: 0, reviewed: 1, pending: 2, approved: 3, declined: 4 };
-  const STATUS_LABELS = { all:'All', new:'New', reviewed:'Reviewed', pending:'Pending Approval', approved:'Approved', declined:'Declined' };ew: 0, reviewed: 1, approved: 2, declined: 3 };
+  const STATUS_ORDER = { new: 0, reviewed: 1, pending: 2, approved: 3, declined: 4 };
+  const STATUS_LABELS = { all:'All', new:'New', reviewed:'Reviewed', pending:'Pending Approval', approved:'Approved', declined:'Declined' };
 
   list = [...list].sort((a, b) => {
     let va, vb;
