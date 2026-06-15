@@ -1723,7 +1723,7 @@ function selApp(id) {
 
   function pill(label, status) {
     const on = a.status === status;
-    const canClick = isAdmin || (status === 'reviewed' && isPM);
+    const canClick = isAdmin || isPM;
     return `<button class="sts-pill s-${status}${on?' on':''}${!canClick?' off':''}"
       ${canClick ? `onclick='setStatus(${sid},"${status}")'` : 'disabled'}>${on?'●':'○'} ${label}</button>`;
   }
