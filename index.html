@@ -65,7 +65,7 @@ aside{width:300px;background:var(--card);border-right:1px solid var(--bdr);displ
 .b-new{background:#DBEAFE;color:#1D4ED8}
 .b-reviewed{background:#FEF3C7;color:#92400E}
 .b-approved{background:#D1FAE5;color:#065F46}
-.b-declined{background:#FEE2E2;color:#991B1B}
+.b-declined{background:#FEE2E2;color:#991B1B} .b-pending{background:#EDE9FE;color:#6D28D9}
 .acard-sub{font-size:11px;color:var(--mut);display:flex;gap:8px;margin-top:2px;flex-wrap:wrap}
 .pm-tag{display:inline-block;padding:2px 8px;border-radius:6px;font-size:10px;font-weight:700;border:1px solid}
 .pm-ul{background:#DBEAFE;color:#1E40AF;border-color:#93C5FD}
@@ -83,7 +83,7 @@ aside{width:300px;background:var(--card);border-right:1px solid var(--bdr);displ
 .sts-pill.s-approved{color:#065F46;border-color:#6EE7B7;background:#ECFDF5}
 .sts-pill.s-approved.on,.sts-pill.s-approved:hover:not(.off){background:#059669;color:#fff;border-color:#059669}
 .sts-pill.s-declined{color:#991B1B;border-color:#FECACA;background:#FFF1F2}
-.sts-pill.s-declined.on,.sts-pill.s-declined:hover:not(.off){background:#DC2626;color:#fff;border-color:#DC2626}
+.sts-pill.s-declined.on,.sts-pill.s-declined:hover:not(.off){background:#DC2626;color:#fff;border-color:#DC2626} .sts-pill.s-pending{color:#6D28D9;border-color:#DDD6FE;background:#F5F3FF} .sts-pill.s-pending.on,.sts-pill.s-pending:hover:not(.off){background:#7C3AED;color:#fff;border-color:#7C3AED}
 .sts-pill.off{opacity:.35;cursor:default}
 /* Section divider inside scard */
 .sdiv{border-top:1px solid var(--bdr);margin:10px 0 8px}
@@ -313,6 +313,7 @@ textarea.notes:focus{outline:none;border-color:var(--acc)}
           <button class="ftab on" onclick="setFilter('all')">All</button>
           <button class="ftab" onclick="setFilter('new')">New</button>
           <button class="ftab" onclick="setFilter('reviewed')">Reviewed</button>
+          <button class="ftab" onclick="setFilter('pending')">Pending Approval</button>
           <button class="ftab" onclick="setFilter('approved')">Approved</button>
           <button class="ftab" onclick="setFilter('declined')">Declined</button>
         </div>
@@ -333,7 +334,19 @@ textarea.notes:focus{outline:none;border-color:var(--acc)}
           <h2 style="font-size:17px;font-weight:700;margin-bottom:3px">Team Processes</h2>
           <p style="font-size:12px;color:var(--mut)">Workflows and communication templates for the Lasi P. Management team.</p>
         </div>
-        <div class="proc-grid">
+           <div class="proc-grid">
+          <div class="proc-card">
+            <div class="proc-card-head">
+              <div class="proc-icon">🔄</div>
+              <div><h3>Application Status Workflow</h3><p>What each status means and how an application moves through the pipeline.</p></div>
+            </div>
+            <div class="doc-section"><h4><span class="badge b-new">New</span></h4><div class="doc-item">Application has just been submitted — not yet reviewed.</div></div>
+            <div class="doc-section"><h4><span class="badge b-reviewed">Reviewed</span></h4><div class="doc-item">You have read/reviewed the application. From here it moves to either <strong>Declined</strong> or <strong>Pending Approval</strong>.</div></div>
+            <div class="doc-section"><h4><span class="badge b-declined">Declined</span></h4><div class="doc-item">The applicant does not qualify to move into a tenancy agreement.</div></div>
+            <div class="doc-section"><h4><span class="badge b-pending">Pending Approval</span></h4><div class="doc-item">Background check in progress / waiting for documents, etc.</div></div>
+            <div class="doc-section"><h4><span class="badge b-approved">Approved</span></h4><div class="doc-item">The tenant has qualified and a lease is generated. The application data moves into the <strong>Lease Agreement</strong> table so it is retained.</div></div>
+            <div class="doc-note">Flow: New → Reviewed → (Declined or Pending Approval) → Approved</div>
+          </div>
           <div class="proc-card">
             <div class="proc-card-head">
               <div class="proc-icon">📧</div>
@@ -1465,7 +1478,8 @@ function getVisibleApps() {
   // ── Sort ──────────────────────────────────────────────────────────────────
   const sortBy = document.getElementById('sortBy')?.value || 'date';
   const dir = sortDir === 'asc' ? 1 : -1;
-  const STATUS_ORDER = { new: 0, reviewed: 1, approved: 2, declined: 3 };
+  const STATUS_ORDER = { n  const STATUS_ORDER = { new: 0, reviewed: 1, pending: 2, approved: 3, declined: 4 };
+  const STATUS_LABELS = { all:'All', new:'New', reviewed:'Reviewed', pending:'Pending Approval', approved:'Approved', declined:'Declined' };ew: 0, reviewed: 1, approved: 2, declined: 3 };
 
   list = [...list].sort((a, b) => {
     let va, vb;
@@ -1529,7 +1543,7 @@ function renderList() {
     }
   }
   const total  = base.length;
-  const counts = { new:0, reviewed:0, approved:0, declined:0 };
+  const counts = { new:0, reviewed:0, pending:0, approved:0, declined:0 };
   base.forEach(a => { if (counts[a.status] !== undefined) counts[a.status]++; });
 
   // Header count
@@ -1541,11 +1555,12 @@ function renderList() {
       <span style="font-size:11px;color:var(--mut)">
         ${counts.new ? `${counts.new} new &middot; ` : ''}
         ${counts.reviewed ? `${counts.reviewed} reviewed &middot; ` : ''}
+        ${counts.pending ? `${counts.pending} pending &middot; ` : ''}
         ${counts.approved ? `${counts.approved} approved &middot; ` : ''}
         ${counts.declined ? `${counts.declined} declined` : ''}
       </span>`;
   } else {
-    const label = filter.charAt(0).toUpperCase() + filter.slice(1);
+    const label = STATUS_LABELS[filter] || (filter.charAt(0).toUpperCase() + filter.slice(1));
     hEl.innerHTML = `<strong>${shown.length}</strong> ${label.toLowerCase()} &nbsp;<span style="font-size:11px;color:var(--mut)">(${total} total)</span>`;
   }
 
@@ -1557,7 +1572,7 @@ function renderList() {
     const s = m[1];
     if (s === 'all') { t.textContent = `All (${total})`; return; }
     const n = counts[s] ?? 0;
-    t.textContent = `${s.charAt(0).toUpperCase() + s.slice(1)}${n ? ` (${n})` : ''}`;
+    t.textContent = `${STATUS_LABELS[s] || (s.charAt(0).toUpperCase() + s.slice(1))}${n ? ` (${n})` : ''}`;
   });
 
   // Search highlight helper — escapes HTML then wraps match in a yellow span
@@ -1574,7 +1589,7 @@ function renderList() {
     return `<div class="acard ${String(selId) === String(a.id) ? 'sel' : ''}" onclick='selApp(${JSON.stringify(a.id)})'>
       <div class="acard-top">
         <span class="acard-name">${hl(a.name)}</span>
-        <span class="badge b-${a.status}">${a.status}</span>
+        <span class="badge b-${a.status}">${STATUS_LABELS[a.status] || a.status}</span>
       </div>
       <div class="acard-sub">${pmTag}<span>${hl(a.propertyAddress)}</span></div>
       <div class="acard-sub"><span>Move-in: ${hl(a.desiredOccupancy || '—')}</span><span>Submitted ${fmtDateTime(a.submittedAt)}</span></div>
@@ -1814,6 +1829,7 @@ function selApp(id) {
       <span class="sts-lbl">Status:</span>
       ${pill('New','new')}
       ${pill('Reviewed','reviewed')}
+      ${pill('Pending Approval','pending')}
       ${pill('Approved','approved')}
       ${pill('Declined','declined')}
       ${!isAdmin && !isPM ? '<span style="font-size:11px;color:var(--mut);margin-left:6px">Admins control status</span>' : ''}
