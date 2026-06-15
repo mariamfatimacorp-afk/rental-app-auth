@@ -25,7 +25,7 @@ header{background:var(--pri);color:#fff;padding:0 24px;height:58px;display:flex;
 .hbrand h1{font-size:15px;font-weight:700}
 .hbrand span{font-size:11px;opacity:.65;font-weight:400}
 .hright{display:flex;align-items:center;gap:14px}
-.hinfo{font-size:12px;opacity:.7}
+.hinfo{font-size:12px;opacity:.95;color:#fff} .hinfo span{color:rgba(255,255,255,.78)!important}
 .huser{text-align:right}
 .huser-name{font-size:12px;font-weight:600;display:block}
 .huser-email{font-size:10px;opacity:.55;display:block;font-weight:400}
@@ -882,20 +882,9 @@ function signIn(account) {
   document.getElementById('userName').textContent = profile.name;
   document.getElementById('userEmail').textContent = email;
   document.getElementById('userRole').textContent = profile.role === 'admin' ? 'Administrator' : 'Property Manager';
-  if (profile.role === 'admin') {
+   if (profile.role === 'admin') {
     document.getElementById('pmFilterWrap').style.display = 'block';
-    document.getElementById('syncMetaBtn').style.display = 'inline-block';
-    // If this admin is also part of a PM group (e.g. mariam.fatima@hotmail.com → Syed/Mariam),
-    // pre-select their group in the filter so they land on their own apps by default.
-    // They can always switch to "All Property Managers" to see everything.
-    const myGroup = PM_NAMES[email];
-    if (myGroup) {
-      const canonical = PM_OPTIONS.find(o => PM_NAMES[o.email] === myGroup);
-      if (canonical) {
-        const el = document.getElementById('pmFilter');
-        if (el) el.value = canonical.email;
-      }
-    }
+    // Admins default to "All Property Managers" (no group pre-select); Sync-to-PMs button removed.
   }
   loadApplications();
 }
