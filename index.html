@@ -1809,7 +1809,7 @@ function selApp(id) {
       <div class="dacts" style="flex-wrap:wrap;gap:6px">
         ${!editMode && isAdmin ? `<button class="btn btn-ylw" onclick='toggleEdit(${sid})'>✏️ Edit</button>` : ''}
   
-        ${a.pdfUrl ? `<a href="${(a.pdfUrl||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}" target="_blank" rel="noopener noreferrer" class="btn btn-pri">&#128196; View PDF</a>` : ''}
+        ${a.pdfUrl ? `<a href="${(a.pdfUrl||'').replace(/<[^>]*>/g,'').replace(/&#58;/g,':').replace(/&amp;/g,'&').replace(/&nbsp;/g,' ').trim()}" target="_blank" rel="noopener noreferrer" class="btn btn-pri">&#128196; View PDF</a>` : ''}
       </div>
     </div>
 
@@ -2035,7 +2035,7 @@ function selApp(id) {
       <textarea class="notes" id="notes_${a.id}" placeholder="Add internal notes about this application…">${a.notes||''}</textarea>
       <div style="display:flex;gap:8px;margin-top:7px;align-items:center;flex-wrap:wrap">
         <button class="btn btn-out" style="font-size:11px" onclick='saveNotes(${sid})'>Save Notes</button>
-        ${a.pdfUrl ? `<a href="${(a.pdfUrl||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}" target="_blank" rel="noopener noreferrer" class="btn btn-acc" style="font-size:11px">Open Original PDF ↗</a>` : ''}
+        ${a.pdfUrl ? `<a href="${(a.pdfUrl||'').replace(/<[^>]*>/g,'').replace(/&#58;/g,':').replace(/&amp;/g,'&').replace(/&nbsp;/g,' ').trim()}" target="_blank" rel="noopener noreferrer" class="btn btn-acc" style="font-size:11px">Open Original PDF ↗</a>` : ''}
       </div>
       ${isAdmin ? `<div style="margin-top:10px;display:flex;gap:8px;align-items:center">
         <input id="pdfUrl_${a.id}" type="url" value="${a.pdfUrl||''}" placeholder="Paste SharePoint PDF link…"
