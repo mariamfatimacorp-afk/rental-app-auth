@@ -1295,6 +1295,7 @@ function mapSPItem(item) {
     ref3Name: s('field_67'), ref3Rel: s('field_68'), ref3Phone: formatPhone(s('field_69')) || s('field_69'),
     emgName: s('field_70'), emgAddress: s('field_71'), emgPhone: formatPhone(s('field_72')) || s('field_72'), emgRel: s('field_73'),
     cosigners: (() => { try { const arr = JSON.parse(s('CosignersJSON') || '[]'); return Array.isArray(arr) ? arr : []; } catch(e) { return []; } })(),
+    landlordRef: (() => { try { const o = JSON.parse(s('LandlordRefJSON') || '{}'); return (o && typeof o === 'object') ? o : {}; } catch(e) { return {}; } })(),
     pdfParsed: true, parseVersion: PARSE_VERSION, pdfRawText: '', pdfAnnFields: '',
   };
 }
@@ -2047,6 +2048,30 @@ function selApp(id) {
       <textarea class="notes" id="occupants_${a.id}" placeholder="e.g.&#10;Varun Rao&#10;Child name">${a.additionalOccupants||''}</textarea>
       <button class="btn btn-out" style="font-size:11px;margin-top:7px" onclick='saveAdditionalOccupants(${sid})'>Save Occupants</button>
     </div>` : ''}
+
+    <!-- ── Previous Landlord Reference Check (PM / Admin) ── -->
+    ${(isAdmin || isPM) ? (() => { const lref = a.landlordRef || {}; const esc = v => (v==null?'':String(v)).replace(/"/g,'&quot;');
+      const q = (n, label) => `<div class="frow"><span class="flbl">${label}</span><input class="ef-input" id="lref_q${n}" value="${esc(lref['q'+n])}" placeholder="Type the landlord's answer…"></div>`;
+      return `
+    <div class="scard" style="margin-bottom:12px;border-left:3px solid #0EA5E9">
+      <h3><span class="icon">📞</span> Previous Landlord Reference Check
+        <span style="font-size:10px;font-weight:500;color:#0369A1;background:#E0F2FE;padding:2px 8px;border-radius:10px;margin-left:4px">Call the previous landlord &amp; record the answers</span>
+      </h3>
+      ${q(1,'1. How long were they your tenants?')}
+      ${q(2,'2. Did they keep the place clean — any damages?')}
+      ${q(3,'3. How much rent were they paying?')}
+      ${q(4,'4. Did they ever miss a payment?')}
+      ${q(5,'5. Any other complaints?')}
+      ${q(6,'6. Would you rent to them again?')}
+      <label style="display:flex;align-items:flex-start;gap:8px;margin-top:12px;font-size:12px;font-weight:600;color:var(--txt);cursor:pointer">
+        <input type="checkbox" id="lref_verified" ${lref.verified ? 'checked' : ''} style="width:16px;height:16px;margin-top:1px">
+        <span>I have reviewed the documents <strong>and</strong> called the previous landlord for complete verification <span style="color:var(--mut);font-weight:400">(required before Approve)</span></span>
+      </label>
+      <div style="margin-top:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-out" style="font-size:11px" onclick='saveReference(${sid})'>Save Reference Check</button>
+        ${lref.verifiedAt ? `<span style="font-size:10px;color:#059669;font-weight:600">✓ Verified ${lref.verifiedAt}</span>` : ''}
+      </div>
+    </div>`; })() : ''}
 
     <!-- ── Notes + PDF link ── -->
     <div class="scard" style="margin-bottom:12px">
@@ -2986,6 +3011,12 @@ function parseRentalAppText(raw) {
 async function setStatus(id, s) {
   const a = apps.find(x => String(x.id) === String(id));
   if (!a) return;
+  // Gate: approving requires the "reviewed docs + called previous landlord" confirmation.
+  if (s === 'approved') {
+    const cb = document.getElementById('lref_verified');
+    const verified = cb ? cb.checked : !!(a.landlordRef && a.landlordRef.verified);
+    if (!verified) { toast('Before approving: confirm you reviewed the documents AND called the previous landlord — check the box in the Landlord Reference Check section, then Save it.', ''); return; }
+  }
   a.status = s;
   appMeta(a.id, { status: s }); // persist locally
   if (a.spId) patchSP(a.spId, { App_Status: s }).catch(() => {}); // best-effort SP sync
@@ -3020,6 +3051,23 @@ async function saveNotes(id) {
     toast('Notes saved locally', 'ok');
   }
 }
+
+// Save the previous-landlord reference Q&A + verification flag to LandlordRefJSON.
+async function saveReference(id) {
+  const a = apps.find(x => String(x.id) === String(id));
+  if (!a) return;
+  const g = k => (document.getElementById('lref_' + k)?.value || '').trim();
+  const verified = !!document.getElementById('lref_verified')?.checked;
+  const ref = { q1:g('q1'), q2:g('q2'), q3:g('q3'), q4:g('q4'), q5:g('q5'), q6:g('q6'), verified };
+  const prev = a.landlordRef || {};
+  if (verified) ref.verifiedAt = (prev.verified && prev.verifiedAt) ? prev.verifiedAt : new Date().toISOString().slice(0,10);
+  a.landlordRef = ref;
+  appMeta(a.id, { landlordRef: ref });
+  if (a.spId && SP_READY) { await patchSP(a.spId, { LandlordRefJSON: JSON.stringify(ref) }); toast('Reference check saved', 'ok'); }
+  else toast('Reference saved locally', 'ok');
+  selApp(id);
+}
+
 async function saveAdditionalTenants(id) {
   const a = apps.find(x => String(x.id) === String(id));
   if (!a) return;
