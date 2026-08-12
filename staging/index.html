@@ -3170,6 +3170,27 @@ function cancelEdit(id) {
   selApp(id);
 }
 
+// App field → SharePoint list column, so EVERY edited field persists back to the DB.
+// (name/coName split into first/middle/last below; landlord/rent/PMNotes/utility are
+//  PM-section columns written separately; propertyManager/PM is set via the reassign dropdown.)
+const APP2SP = {
+  email:'field_16', phone1:'field_17', phone2:'field_18', dob:'field_19', currentAddress:'field_15',
+  coEmail:'field_25', coPhone1:'field_26', coPhone2:'field_27', coDob:'field_28', coCurrentAddress:'field_24',
+  prevLandlordName:'field_29', prevLandlordPhone:'field_30', prevAddress:'field_31', prevStay:'field_32', prevRent:'field_33', prevReason:'field_34',
+  empStatus:'field_35', empEmployer:'field_36', empAddress:'field_37', empSupervisor:'field_38', empSupPhone:'field_39', empLength:'field_40', empWage:'field_41', empPosition:'field_42', empOther:'field_43',
+  coEmpEmployer:'field_44', coEmpAddress:'field_45', coEmpSupervisor:'field_46', coEmpSupPhone:'field_47', coEmpLength:'field_48', coEmpWage:'field_49', coEmpPosition:'field_50',
+  crBankruptcy:'field_51', crEviction:'field_52', crLatePayments:'field_53', crRefused:'field_54', crExplanation:'field_55',
+  hasPets:'field_56', petDesc:'field_57', smokes:'field_58', hasInsurance:'field_59', jointCreditConsent:'field_60',
+  ref1Name:'field_61', ref1Rel:'field_62', ref1Phone:'field_63',
+  ref2Name:'field_64', ref2Rel:'field_65', ref2Phone:'field_66',
+  ref3Name:'field_67', ref3Rel:'field_68', ref3Phone:'field_69',
+  emgName:'field_70', emgAddress:'field_71', emgPhone:'field_72', emgRel:'field_73',
+  ackNoPetsPermission:'field_74', ackPetDeposit:'field_75', ackInfoTrue:'field_76', ackAuthorizeObtain:'field_77', ackAuthorizeDisclose:'field_78',
+  propertyAddress:'field_5', desiredOccupancy:'field_7', maxOccupants:'field_8', adults:'field_9', children:'field_10',
+};
+const NUM_KEYS  = new Set(['empWage','coEmpWage','maxOccupants','adults']);
+const DATE_KEYS = new Set(['dob','coDob','desiredOccupancy']);
+
 function saveEdit(id) {
   const a = apps.find(x => String(x.id) === String(id));
   if (!a) return;
@@ -3222,13 +3243,15 @@ function saveEdit(id) {
     if (a.utilityClause) sp.UtilityClause = a.utilityClause;
     if (updates.name)   { const n=splitName(a.name);   sp.field_11=n.f; sp.field_12=n.m; sp.field_13=n.l; }
     if (updates.coName) { const n=splitName(a.coName); sp.field_20=n.f; sp.field_21=n.m; sp.field_22=n.l; }
-    if (updates.email)            sp.field_16 = a.email;
-    if (updates.phone1)           sp.field_17 = a.phone1;
-    if (updates.phone2)           sp.field_18 = a.phone2;
-    if (updates.currentAddress)   sp.field_15 = a.currentAddress;
-    if (updates.coEmail)          sp.field_25 = a.coEmail;
-    if (updates.coPhone1)         sp.field_26 = a.coPhone1;
-    if (updates.coCurrentAddress) sp.field_24 = a.coCurrentAddress;
+    // Every other edited field → its SP column, so ALL edits persist to the DB.
+    const isoDate = v => { const m=String(v||'').match(/^(\d{4}-\d{2}-\d{2})/); return m ? m[1]+'T00:00:00Z' : (v||''); };
+    Object.keys(updates).forEach(k => {
+      const col = APP2SP[k]; if (!col) return;
+      let val = a[k];
+      if (NUM_KEYS.has(k))       val = Number(String(val).replace(/[$,\s]/g,'')) || 0;
+      else if (DATE_KEYS.has(k)) val = isoDate(val);
+      sp[col] = val;
+    });
     if (cosChanged) sp.CosignersJSON = JSON.stringify(a.cosigners);
     patchSP(a.spId, sp).catch(() => {});
   }
