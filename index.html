@@ -349,22 +349,6 @@ textarea.notes:focus{outline:none;border-color:var(--acc)}
           </div>
           <div class="proc-card">
             <div class="proc-card-head">
-              <div class="proc-icon">📧</div>
-              <div><h3>Send Requirements to Tenant</h3><p>Trigger an N8n workflow to automatically email the document requirements checklist to an applicant.</p></div>
-            </div>
-            <div class="proc-pick">
-              <label>Select Applicant</label>
-              <select id="req-app-select" onchange="updateReqPreview()"><option value="">— choose applicant —</option></select>
-            </div>
-            <div class="proc-preview" id="req-preview"></div>
-            <div style="display:flex;gap:8px;flex-wrap:wrap">
-              <button id="req-send-btn" class="btn btn-pri" onclick="triggerSendRequirements()">Send via N8n</button>
-              <button class="btn btn-out" style="font-size:11px" onclick="copyTplText()">Copy email template</button>
-            </div>
-            <div id="n8n-status"></div>
-          </div>
-          <div class="proc-card">
-            <div class="proc-card-head">
               <div class="proc-icon">📋</div>
               <div><h3>Required Documents</h3><p>Checklist and tenant email template for collecting application supporting documents.</p></div>
             </div>
@@ -470,6 +454,7 @@ Please send all documents at your earliest convenience.
             <label>Utilities (electricity, gas, water, sewer, garbage)</label>
             <div class="rg" style="flex-direction:column;gap:5px;margin-top:5px">
               <label class="ro"><input type="radio" name="f_utils" value="split" checked onchange="toggleUtilCustom()"> Split — upper pays 65%, basement pays 35%</label>
+              <label class="ro"><input type="radio" name="f_utils" value="split23" onchange="toggleUtilCustom()"> Split — upper pays ⅔ (two-thirds), basement pays ⅓ (one-third)</label>
               <label class="ro"><input type="radio" name="f_utils" value="tenant" onchange="toggleUtilCustom()"> Tenant pays 100% of all utilities</label>
               <label class="ro"><input type="radio" name="f_utils" value="included" onchange="toggleUtilCustom()"> Included in rent — landlord pays all utilities</label>
               <label class="ro"><input type="radio" name="f_utils" value="other" onchange="toggleUtilCustom()"> Other arrangement</label>
@@ -651,9 +636,27 @@ Please send all documents at your earliest convenience.
 
 <script>
 // ── CONFIG ────────────────────────────────────────────────────────────────────
+// SANDBOX = staging deploy (URL path contains /staging/) or ?env=sandbox added to
+// the URL. In sandbox the app reads LIVE data (so testing is realistic) but ALL
+// writes are DISABLED — nothing you click can change real records. A red banner
+// makes sandbox mode unmistakable.
+const IS_SANDBOX = location.pathname.includes('/staging/') || new URLSearchParams(location.search).get('env') === 'sandbox';
+if (IS_SANDBOX) {
+  const _sbx = () => {
+    if (document.getElementById('__sbx')) return;
+    const b = document.createElement('div');
+    b.id = '__sbx';
+    b.textContent = '🧪 SANDBOX — reads live data, but writes are DISABLED. Safe to test; nothing here changes real records.';
+    b.style.cssText = 'position:fixed;bottom:0;left:0;right:0;z-index:2147483647;background:#B91C1C;color:#fff;font:700 13px system-ui,sans-serif;text-align:center;padding:7px;letter-spacing:.2px';
+    (document.body || document.documentElement).appendChild(b);
+  };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _sbx); else _sbx();
+}
 const CLIENT_ID    = 'e919f7e3-0803-40ba-8814-6a9c7c5f5a2c';
 const TENANT_ID    = '4ea06523-b132-4959-a89e-2e388d88664d';
-const REDIRECT_URI = 'https://mariamfatimacorp-afk.github.io/rental-app-auth/';
+const REDIRECT_URI = IS_SANDBOX
+  ? 'https://mariamfatimacorp-afk.github.io/rental-app-auth/staging/'
+  : 'https://mariamfatimacorp-afk.github.io/rental-app-auth/';
 
 // SharePoint site (mfocorp.sharepoint.com — "Lasi P. Management" site)
 const SP_SITE   = 'mfocorp.sharepoint.com,58eef16b-dfbf-4d68-aca5-0ac7eaca6668,5b1ededb-8b61-4412-895b-f13c59c131d4';
@@ -742,6 +745,14 @@ const PM_OPTIONS = [
   { email: 'tamer@lasipmanagement.com', name: 'Tamer Alhabbal' },
   { email: 'syed@lasipmanagement.com',  name: 'Syed / Mariam' },
 ];
+// Reassignment writes the PM back to the form's field_6 (the column the app reads
+// on load) so it STICKS. Maps each account to the exact field_6 choice value
+// (note: the form uses "Mariam / Syed", not "Syed / Mariam").
+const PM_FIELD6 = {
+  'umair@lasipmanagement.com': 'Umair Lasi',
+  'tamer@lasipmanagement.com': 'Tamer Alhabbal',
+  'syed@lasipmanagement.com':  'Mariam / Syed',
+};
   
 // Lease Fast Intake Questionnaire — embedded for reference and future AI integration.
 // Steps: 1-Property/Unit, 2-Uploads, 3-Landlord/Tenant, 4-Dates/Rent, 5-Appliances,
@@ -914,7 +925,7 @@ async function loadSharedMeta(token) {
   return {};
 }
 async function saveSharedMeta() {
-  if (!SP_READY || SP_USE_LIST || currentUser?.role !== 'admin') return;
+  if (!SP_READY || SP_USE_LIST || IS_SANDBOX || currentUser?.role !== 'admin') return;
   try {
     const meta = {};
     for (const a of apps) {
@@ -1290,6 +1301,7 @@ function mapSPItem(item) {
 
 async function patchSP(spId, fields) {
   if (!SP_READY) return;
+  if (IS_SANDBOX) { console.log('[SANDBOX] write skipped (patchSP)', spId, fields); toast('🧪 Sandbox — change shown but NOT saved to live', ''); return; }
   try {
     const token = await getToken();
     const url = SP_USE_LIST
@@ -2038,7 +2050,7 @@ function selApp(id) {
         ${a.pdfUrl ? `<a href="${(a.pdfUrl||'').replace(/<[^>]*>/g,'').replace(/&#58;/g,':').replace(/&amp;/g,'&').replace(/&nbsp;/g,' ').trim()}" target="_blank" rel="noopener noreferrer" class="btn btn-acc" style="font-size:11px">Open Original PDF ↗</a>` : ''}
       </div>
       ${isAdmin ? `<div style="margin-top:10px;display:flex;gap:8px;align-items:center">
-        <input id="pdfUrl_${a.id}" type="url" value="${a.pdfUrl||''}" placeholder="Paste SharePoint PDF link…"
+        <input id="pdfUrl_${a.id}" type="url" value="${(a.pdfUrl||'').replace(/<[^>]*>/g,'').replace(/&#58;/g,':').replace(/&amp;/g,'&').replace(/&nbsp;/g,' ').trim().replace(/"/g,'&quot;')}" placeholder="Paste SharePoint PDF link…"
           style="flex:1;padding:6px 10px;border:1.5px solid var(--bdr);border-radius:6px;font-size:12px;color:var(--txt);background:var(--bg)">
         <button class="btn btn-out" style="font-size:11px;white-space:nowrap" onclick='savePdfUrl(${sid})'>Save Link</button>
       </div>` : ''}
@@ -2982,8 +2994,7 @@ async function assignPM(id, pmEmail) {
   a.pmEmail = pmEmail;
   a.propertyManager = PM_NAMES[pmEmail] || '';
   appMeta(a.id, { pmEmail, pmName: PM_NAMES[pmEmail] || '' }); // persist locally
-  if (a.spId) patchSP(a.spId, { App_PM: pmEmail }).catch(() => {}); // best-effort SP sync
-  saveSharedMeta().catch(() => {}); // sync to shared JSON — THIS is how PMs see assignments cross-device
+  if (a.spId) patchSP(a.spId, { field_6: PM_FIELD6[pmEmail] || '' }).catch(() => {}); // write PM to field_6 so it persists on reload
   renderList();
   toast(pmEmail ? `Assigned to ${PM_NAMES[pmEmail] || pmEmail}` : 'PM unassigned', 'ok');
 }
@@ -3608,6 +3619,7 @@ async function removeSignedLease(id) {
 }
 async function saveLeaseRecord(d) {
   if (leaseSaved || !d || !d.app || !d.app.spId) return;
+  if (IS_SANDBOX) { console.log('[SANDBOX] lease-record save skipped', d); toast('🧪 Sandbox — lease NOT saved to live', ''); return; }
   const token = await getToken(); if (!token) return;
   const cap = s => s ? s.charAt(0).toUpperCase()+s.slice(1) : '';
   const otherRented = document.querySelector('input[name="otherRented"]:checked')?.value || 'no';
@@ -3858,6 +3870,10 @@ function buildTemplateReplacements(d) {
     ? 'Tenant pays 100% of all utilities (electricity, gas, water, sewer, garbage).'
     : d.utils==='other'
     ? (d.utilCustom || 'As separately agreed between Landlord and Tenant.')
+    : d.utils==='split23'
+    ? `${uWord.charAt(0).toUpperCase()+uWord.slice(1)} unit tenant pays ${d.utype==='upper'?'two-thirds (⅔)':'one-third (⅓)'}, ` +
+      `${uOther} unit tenant pays ${d.utype==='upper'?'one-third (⅓)':'two-thirds (⅔)'} of the total monthly utility bill ` +
+      `(electricity, gas, water, sewer, garbage).`
     : `${uWord.charAt(0).toUpperCase()+uWord.slice(1)} unit tenant pays ${uShare}%, ` +
       `${uOther} unit tenant pays ${uOtherShare}% of the total monthly utility bill ` +
       `(electricity, gas, water, sewer, garbage).`;
@@ -3938,6 +3954,8 @@ function buildLeaseTemplateData(d) {
     ? 'The rental rate DOES NOT include utilities. The Tenant shall pay 100% of all utility costs directly.'
     : d.utils==='other'
     ? (d.utilCustom || 'Utility payment terms are as separately agreed between Landlord and Tenant.')
+    : d.utils==='split23'
+    ? `The rental rate DOES NOT include utilities. The ${uWord} tenant shall pay ${d.utype==='upper'?'two-thirds (⅔)':'one-third (⅓)'} and the ${uWordO} tenant shall pay ${d.utype==='upper'?'one-third (⅓)':'two-thirds (⅔)'} of the total monthly utility bill.`
     : `The rental rate DOES NOT include utilities. The ${uWord} tenant shall pay ${uShare}% and the ${uWordO} tenant shall pay ${uOther}% of the total monthly utility bill.`;
 
   const petClause = d.pets==='yes' && d.petDesc
@@ -4085,6 +4103,8 @@ function buildLeaseHTML(d) {
       ? 'The rental rate prescribed above DOES NOT include utilities. The Tenant shall pay 100% of all utility costs including electricity, gas, water, sewer, and garbage directly to the applicable authorities or to the Landlord as applicable.'
       : utils === 'other'
       ? `The rental rate prescribed above DOES NOT include utilities. ${d.utilCustom || 'Utility payment terms are as separately agreed between Landlord and Tenant.'}`
+      : utils === 'split23'
+      ? `The rental rate prescribed above DOES NOT include the costs of providing electricity, gas, water, sewer, and garbage services to the premises. The ${uWord} tenant shall pay ${d.utype==='upper'?'two-thirds (⅔)':'one-third (⅓)'} and the ${uWordO} tenant shall pay ${d.utype==='upper'?'one-third (⅓)':'two-thirds (⅔)'} of the total monthly utility bill.`
       : `The rental rate prescribed above DOES NOT include the costs of providing electricity, gas, water, sewer, and garbage services to the premises. The ${uWord} tenant shall pay ${uShare}% and the ${uWordO} tenant shall pay ${uOther}% of the total monthly utility bill.`),
     cl(5,'CABLE, INTERNET AND TELEPHONE',`The Tenant agrees to pay on demand to the appropriate authority, or Landlord for those services billed directly to the Landlord, and to be fully responsible for the costs of all other services not specifically mentioned in Clause 4 above, including cable, internet and telephone services.`),
     cl(6,'APPLIANCES',`The Landlord agrees that throughout the term of this Agreement, the Landlord will supply for the Tenant's use ${d.appliances} in the premises.`),
@@ -4379,6 +4399,7 @@ function switchView(v) {
 
 function populateReqSelect() {
   const sel = document.getElementById('req-app-select');
+  if (!sel) return; // "Send Requirements to Tenant" card removed
   sel.innerHTML = '<option value="">— choose applicant —</option>' +
     apps.map(a => `<option value="${a.id}">${a.name} — ${a.propertyAddress} (${a.status})</option>`).join('');
 }
