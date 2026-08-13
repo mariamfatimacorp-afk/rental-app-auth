@@ -3029,6 +3029,15 @@ async function setStatus(id, s) {
 async function assignPM(id, pmEmail) {
   const a = apps.find(x => String(x.id) === String(id));
   if (!a) return;
+  if (String(a.pmEmail || '') === String(pmEmail || '')) return; // no change — ignore
+  // Reconfirm before reassigning to a different PM (prevents accidental dropdown changes).
+  const fromPM = PM_NAMES[a.pmEmail] || a.propertyManager || 'Unassigned';
+  const toPM   = pmEmail ? (PM_NAMES[pmEmail] || pmEmail) : 'Unassigned';
+  if (!confirm(`Reassign "${a.name}"\n\nFrom:  ${fromPM}\nTo:      ${toPM}\n\nAre you sure?`)) {
+    const sel = document.getElementById('pmAssignSelect'); // cancelled → revert the dropdown
+    if (sel) sel.value = a.pmEmail || '';
+    return;
+  }
   a.pmEmail = pmEmail;
   a.propertyManager = PM_NAMES[pmEmail] || '';
   appMeta(a.id, { pmEmail, pmName: PM_NAMES[pmEmail] || '' }); // persist locally
