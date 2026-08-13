@@ -1295,6 +1295,7 @@ function mapSPItem(item) {
     ref3Name: s('field_67'), ref3Rel: s('field_68'), ref3Phone: formatPhone(s('field_69')) || s('field_69'),
     emgName: s('field_70'), emgAddress: s('field_71'), emgPhone: formatPhone(s('field_72')) || s('field_72'), emgRel: s('field_73'),
     cosigners: (() => { try { const arr = JSON.parse(s('CosignersJSON') || '[]'); return Array.isArray(arr) ? arr : []; } catch(e) { return []; } })(),
+    landlordRef: (() => { try { const o = JSON.parse(s('LandlordRefJSON') || '{}'); return (o && typeof o === 'object') ? o : {}; } catch(e) { return {}; } })(),
     pdfParsed: true, parseVersion: PARSE_VERSION, pdfRawText: '', pdfAnnFields: '',
   };
 }
@@ -1763,28 +1764,35 @@ function selApp(id) {
     if (!list.length) return '';
     const dt = v => v ? String(v).split('T')[0] : '';
     const money = v => { const n = parseFloat(v); return n ? '$' + n.toLocaleString() : (v || ''); };
+    const canEdit = editMode && isAdmin;
+    // cfrow: editable co-signer field in edit mode (id efcos_<i>_<key>), else read-only
+    const cfrow = (lbl, val, i, key) => {
+      const v = (val == null ? '' : String(val));
+      if (canEdit) return `<div class="frow"><span class="flbl">${lbl}</span><input class="ef-input" id="efcos_${i}_${key}" value="${v.replace(/"/g,'&quot;')}"></div>`;
+      return `<div class="frow"><span class="flbl">${lbl}</span><span class="fval">${v || '<span style="color:var(--mut);font-weight:400">—</span>'}</span></div>`;
+    };
     return list.map((c, i) => {
       const nm = [c.cosigner_first_name, c.cosigner_middle_name, c.cosigner_last_name].map(x => (x || '').trim()).filter(Boolean).join(' ');
       return `
     <div class="secgrid" style="margin-bottom:12px">
       <div class="scard">
-        <h3><span class="icon">✍️</span> Co-Signer ${i + 1} — Personal</h3>
-        ${frow('Full Legal Name', nm)}
-        ${frow('Date of Birth', dt(c.cosigner_date_of_birth))}
-        ${frow('Email', c.cosigner_email)}
-        ${frow('Phone (Cell)', formatPhone(c.cosigner_phone_1) || c.cosigner_phone_1)}
-        ${frow('Phone (Home / Alt)', formatPhone(c.cosigner_phone_2) || c.cosigner_phone_2)}
-        ${frow('Current Residential Address', c.cosigner_current_address)}
+        <h3><span class="icon">✍️</span> Co-Signer ${i + 1} — Personal ${!canEdit && isAdmin ? '<span style="font-size:10px;font-weight:400;color:var(--mut);margin-left:6px">— click Edit to change</span>' : ''}</h3>
+        ${cfrow('Full Legal Name', nm, i, 'fullname')}
+        ${cfrow('Date of Birth', dt(c.cosigner_date_of_birth), i, 'cosigner_date_of_birth')}
+        ${cfrow('Email', c.cosigner_email, i, 'cosigner_email')}
+        ${cfrow('Phone (Cell)', canEdit ? c.cosigner_phone_1 : (formatPhone(c.cosigner_phone_1) || c.cosigner_phone_1), i, 'cosigner_phone_1')}
+        ${cfrow('Phone (Home / Alt)', canEdit ? c.cosigner_phone_2 : (formatPhone(c.cosigner_phone_2) || c.cosigner_phone_2), i, 'cosigner_phone_2')}
+        ${cfrow('Current Residential Address', c.cosigner_current_address, i, 'cosigner_current_address')}
       </div>
       <div class="scard">
         <h3><span class="icon">💼</span> Co-Signer ${i + 1} — Employment</h3>
-        ${frow('Name of Employer', c.cosigner_current_employer)}
-        ${frow('Employer Address', c.cosigner_employer_address)}
-        ${frow('Position / Title', c.cosigner_job_position)}
-        ${frow('Length of Employment', c.cosigner_length_of_employment)}
-        ${frow('Monthly Gross Income ($)', money(c.cosigner_monthly_wage))}
-        ${frow('Supervisor Name', c.cosigner_supervisor_name)}
-        ${frow('Supervisor Phone', formatPhone(c.cosigner_supervisor_phone) || c.cosigner_supervisor_phone)}
+        ${cfrow('Name of Employer', c.cosigner_current_employer, i, 'cosigner_current_employer')}
+        ${cfrow('Employer Address', c.cosigner_employer_address, i, 'cosigner_employer_address')}
+        ${cfrow('Position / Title', c.cosigner_job_position, i, 'cosigner_job_position')}
+        ${cfrow('Length of Employment', c.cosigner_length_of_employment, i, 'cosigner_length_of_employment')}
+        ${cfrow('Monthly Gross Income ($)', canEdit ? c.cosigner_monthly_wage : money(c.cosigner_monthly_wage), i, 'cosigner_monthly_wage')}
+        ${cfrow('Supervisor Name', c.cosigner_supervisor_name, i, 'cosigner_supervisor_name')}
+        ${cfrow('Supervisor Phone', canEdit ? c.cosigner_supervisor_phone : (formatPhone(c.cosigner_supervisor_phone) || c.cosigner_supervisor_phone), i, 'cosigner_supervisor_phone')}
       </div>
     </div>`;
     }).join('');
@@ -2040,6 +2048,30 @@ function selApp(id) {
       <textarea class="notes" id="occupants_${a.id}" placeholder="e.g.&#10;Varun Rao&#10;Child name">${a.additionalOccupants||''}</textarea>
       <button class="btn btn-out" style="font-size:11px;margin-top:7px" onclick='saveAdditionalOccupants(${sid})'>Save Occupants</button>
     </div>` : ''}
+
+    <!-- ── Previous Landlord Reference Check (PM / Admin) ── -->
+    ${(isAdmin || isPM) ? (() => { const lref = a.landlordRef || {}; const esc = v => (v==null?'':String(v)).replace(/"/g,'&quot;');
+      const q = (n, label) => `<div class="frow"><span class="flbl">${label}</span><input class="ef-input" id="lref_q${n}" value="${esc(lref['q'+n])}" placeholder="Type the landlord's answer…"></div>`;
+      return `
+    <div class="scard" style="margin-bottom:12px;border-left:3px solid #0EA5E9">
+      <h3><span class="icon">📞</span> Previous Landlord Reference Check
+        <span style="font-size:10px;font-weight:500;color:#0369A1;background:#E0F2FE;padding:2px 8px;border-radius:10px;margin-left:4px">Call the previous landlord &amp; record the answers</span>
+      </h3>
+      ${q(1,'1. How long were they your tenants?')}
+      ${q(2,'2. Did they keep the place clean — any damages?')}
+      ${q(3,'3. How much rent were they paying?')}
+      ${q(4,'4. Did they ever miss a payment?')}
+      ${q(5,'5. Any other complaints?')}
+      ${q(6,'6. Would you rent to them again?')}
+      <label style="display:flex;align-items:flex-start;gap:8px;margin-top:12px;font-size:12px;font-weight:600;color:var(--txt);cursor:pointer">
+        <input type="checkbox" id="lref_verified" ${lref.verified ? 'checked' : ''} style="width:16px;height:16px;margin-top:1px">
+        <span>I have reviewed the documents <strong>and</strong> called the previous landlord for complete verification <span style="color:var(--mut);font-weight:400">(required before Approve)</span></span>
+      </label>
+      <div style="margin-top:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-out" style="font-size:11px" onclick='saveReference(${sid})'>Save Reference Check</button>
+        ${lref.verifiedAt ? `<span style="font-size:10px;color:#059669;font-weight:600">✓ Verified ${lref.verifiedAt}</span>` : ''}
+      </div>
+    </div>`; })() : ''}
 
     <!-- ── Notes + PDF link ── -->
     <div class="scard" style="margin-bottom:12px">
@@ -2979,6 +3011,12 @@ function parseRentalAppText(raw) {
 async function setStatus(id, s) {
   const a = apps.find(x => String(x.id) === String(id));
   if (!a) return;
+  // Gate: approving requires the "reviewed docs + called previous landlord" confirmation.
+  if (s === 'approved') {
+    const cb = document.getElementById('lref_verified');
+    const verified = cb ? cb.checked : !!(a.landlordRef && a.landlordRef.verified);
+    if (!verified) { toast('Before approving: confirm you reviewed the documents AND called the previous landlord — check the box in the Landlord Reference Check section, then Save it.', ''); return; }
+  }
   a.status = s;
   appMeta(a.id, { status: s }); // persist locally
   if (a.spId) patchSP(a.spId, { App_Status: s }).catch(() => {}); // best-effort SP sync
@@ -3013,6 +3051,23 @@ async function saveNotes(id) {
     toast('Notes saved locally', 'ok');
   }
 }
+
+// Save the previous-landlord reference Q&A + verification flag to LandlordRefJSON.
+async function saveReference(id) {
+  const a = apps.find(x => String(x.id) === String(id));
+  if (!a) return;
+  const g = k => (document.getElementById('lref_' + k)?.value || '').trim();
+  const verified = !!document.getElementById('lref_verified')?.checked;
+  const ref = { q1:g('q1'), q2:g('q2'), q3:g('q3'), q4:g('q4'), q5:g('q5'), q6:g('q6'), verified };
+  const prev = a.landlordRef || {};
+  if (verified) ref.verifiedAt = (prev.verified && prev.verifiedAt) ? prev.verifiedAt : new Date().toISOString().slice(0,10);
+  a.landlordRef = ref;
+  appMeta(a.id, { landlordRef: ref });
+  if (a.spId && SP_READY) { await patchSP(a.spId, { LandlordRefJSON: JSON.stringify(ref) }); toast('Reference check saved', 'ok'); }
+  else toast('Reference saved locally', 'ok');
+  selApp(id);
+}
+
 async function saveAdditionalTenants(id) {
   const a = apps.find(x => String(x.id) === String(id));
   if (!a) return;
@@ -3163,6 +3218,27 @@ function cancelEdit(id) {
   selApp(id);
 }
 
+// App field → SharePoint list column, so EVERY edited field persists back to the DB.
+// (name/coName split into first/middle/last below; landlord/rent/PMNotes/utility are
+//  PM-section columns written separately; propertyManager/PM is set via the reassign dropdown.)
+const APP2SP = {
+  email:'field_16', phone1:'field_17', phone2:'field_18', dob:'field_19', currentAddress:'field_15',
+  coEmail:'field_25', coPhone1:'field_26', coPhone2:'field_27', coDob:'field_28', coCurrentAddress:'field_24',
+  prevLandlordName:'field_29', prevLandlordPhone:'field_30', prevAddress:'field_31', prevStay:'field_32', prevRent:'field_33', prevReason:'field_34',
+  empStatus:'field_35', empEmployer:'field_36', empAddress:'field_37', empSupervisor:'field_38', empSupPhone:'field_39', empLength:'field_40', empWage:'field_41', empPosition:'field_42', empOther:'field_43',
+  coEmpEmployer:'field_44', coEmpAddress:'field_45', coEmpSupervisor:'field_46', coEmpSupPhone:'field_47', coEmpLength:'field_48', coEmpWage:'field_49', coEmpPosition:'field_50',
+  crBankruptcy:'field_51', crEviction:'field_52', crLatePayments:'field_53', crRefused:'field_54', crExplanation:'field_55',
+  hasPets:'field_56', petDesc:'field_57', smokes:'field_58', hasInsurance:'field_59', jointCreditConsent:'field_60',
+  ref1Name:'field_61', ref1Rel:'field_62', ref1Phone:'field_63',
+  ref2Name:'field_64', ref2Rel:'field_65', ref2Phone:'field_66',
+  ref3Name:'field_67', ref3Rel:'field_68', ref3Phone:'field_69',
+  emgName:'field_70', emgAddress:'field_71', emgPhone:'field_72', emgRel:'field_73',
+  ackNoPetsPermission:'field_74', ackPetDeposit:'field_75', ackInfoTrue:'field_76', ackAuthorizeObtain:'field_77', ackAuthorizeDisclose:'field_78',
+  propertyAddress:'field_5', desiredOccupancy:'field_7', maxOccupants:'field_8', adults:'field_9', children:'field_10',
+};
+const NUM_KEYS  = new Set(['empWage','coEmpWage','maxOccupants','adults']);
+const DATE_KEYS = new Set(['dob','coDob','desiredOccupancy']);
+
 function saveEdit(id) {
   const a = apps.find(x => String(x.id) === String(id));
   if (!a) return;
@@ -3182,6 +3258,23 @@ function saveEdit(id) {
     }
     updates[key] = val;
   });
+  // ── Co-signer cards (structured CosignersJSON) — collect edited fields ──
+  const cosEls = document.querySelectorAll('[id^="efcos_"]');
+  let cosChanged = false;
+  if (cosEls.length && Array.isArray(a.cosigners)) {
+    const splitNm = full => { const p=String(full||'').trim().split(/\s+/).filter(Boolean); return p.length<=1?{f:p[0]||'',m:'',l:''}:p.length===2?{f:p[0],m:'',l:p[1]}:{f:p[0],m:p.slice(1,-1).join(' '),l:p[p.length-1]}; };
+    cosEls.forEach(el => {
+      const mm = el.id.match(/^efcos_(\d+)_(.+)$/); if (!mm) return;
+      const c = a.cosigners[Number(mm[1])]; if (!c) return;
+      const key = mm[2], val = el.value;
+      if (key === 'fullname') { const n = splitNm(val); c.cosigner_first_name=n.f; c.cosigner_middle_name=n.m; c.cosigner_last_name=n.l; }
+      else if (['cosigner_phone_1','cosigner_phone_2','cosigner_supervisor_phone'].includes(key)) { c[key] = formatPhone(val) || val; }
+      else if (key === 'cosigner_monthly_wage') { c[key] = String(val).replace(/[$,\s]/g,''); }
+      else { c[key] = val; }
+      cosChanged = true;
+    });
+    if (cosChanged) updates.cosigners = a.cosigners;
+  }
   Object.assign(a, updates);
   appMeta(a.id, updates);
   saveSharedMeta().catch(() => {}); // sync edits (rent, notes, etc.) to shared JSON
@@ -3198,13 +3291,16 @@ function saveEdit(id) {
     if (a.utilityClause) sp.UtilityClause = a.utilityClause;
     if (updates.name)   { const n=splitName(a.name);   sp.field_11=n.f; sp.field_12=n.m; sp.field_13=n.l; }
     if (updates.coName) { const n=splitName(a.coName); sp.field_20=n.f; sp.field_21=n.m; sp.field_22=n.l; }
-    if (updates.email)            sp.field_16 = a.email;
-    if (updates.phone1)           sp.field_17 = a.phone1;
-    if (updates.phone2)           sp.field_18 = a.phone2;
-    if (updates.currentAddress)   sp.field_15 = a.currentAddress;
-    if (updates.coEmail)          sp.field_25 = a.coEmail;
-    if (updates.coPhone1)         sp.field_26 = a.coPhone1;
-    if (updates.coCurrentAddress) sp.field_24 = a.coCurrentAddress;
+    // Every other edited field → its SP column, so ALL edits persist to the DB.
+    const isoDate = v => { const m=String(v||'').match(/^(\d{4}-\d{2}-\d{2})/); return m ? m[1]+'T00:00:00Z' : (v||''); };
+    Object.keys(updates).forEach(k => {
+      const col = APP2SP[k]; if (!col) return;
+      let val = a[k];
+      if (NUM_KEYS.has(k))       val = Number(String(val).replace(/[$,\s]/g,'')) || 0;
+      else if (DATE_KEYS.has(k)) val = isoDate(val);
+      sp[col] = val;
+    });
+    if (cosChanged) sp.CosignersJSON = JSON.stringify(a.cosigners);
     patchSP(a.spId, sp).catch(() => {});
   }
   toast('Application data saved ✓', 'ok');
