@@ -280,6 +280,7 @@ textarea.notes:focus{outline:none;border-color:var(--acc)}
       <div class="sb-nav">
         <button class="sbn on" id="sbn-apps" onclick="switchView('apps')">Applications</button>
         <button class="sbn" id="sbn-proc" onclick="switchView('proc')">Processes</button>
+        <button class="sbn" id="sbn-lease" onclick="switchView('lease')" style="display:none">Lease Agreements</button>
       </div>
       <div class="sbhead">
         <h2>Applications</h2>
@@ -895,6 +896,7 @@ function signIn(account) {
   document.getElementById('userRole').textContent = profile.role === 'admin' ? 'Administrator' : 'Property Manager';
    if (profile.role === 'admin') {
     document.getElementById('pmFilterWrap').style.display = 'block';
+    const sbl = document.getElementById('sbn-lease'); if (sbl) sbl.style.display = '';
     // Admins default to "All Property Managers" (no group pre-select); Sync-to-PMs button removed.
   }
   loadApplications();
@@ -4492,14 +4494,82 @@ function buildPDF(d) {
 const CONFIG = { n8nSendRequirements: '' };
 
 function switchView(v) {
-  const isApps = v === 'apps';
+  const isApps = v === 'apps', isLease = v === 'lease';
   document.querySelector('.sbhead').style.display = isApps ? '' : 'none';
   document.getElementById('alist').style.display = isApps ? '' : 'none';
   document.getElementById('main').style.display = isApps ? '' : 'none';
-  document.getElementById('vmp').style.display = isApps ? 'none' : 'block';
+  document.getElementById('vmp').style.display = (v === 'proc') ? 'block' : 'none';
+  const lv = document.getElementById('leaseView'); if (lv) lv.style.display = isLease ? 'block' : 'none';
   document.getElementById('sbn-apps').classList.toggle('on', isApps);
-  document.getElementById('sbn-proc').classList.toggle('on', !isApps);
-  if (!isApps) populateReqSelect();
+  document.getElementById('sbn-proc').classList.toggle('on', v === 'proc');
+  const sbl = document.getElementById('sbn-lease'); if (sbl) sbl.classList.toggle('on', isLease);
+  if (v === 'proc') populateReqSelect();
+  if (isLease) loadLeases();
+}
+
+// ── LEASE AGREEMENTS DASHBOARD (admin) ───────────────────────────────────────
+let leases = [], leaseSearch = '';
+const _escH = s => (s==null?'':String(s)).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const _clnU = u => (u||'').replace(/<[^>]*>/g,'').replace(/&#58;/g,':').replace(/&amp;/g,'&').replace(/&nbsp;/g,' ').trim();
+function ensureLeasePanel() {
+  let lv = document.getElementById('leaseView');
+  if (!lv) { lv = document.createElement('div'); lv.id='leaseView'; lv.className='proc-view'; lv.style.display='none'; document.querySelector('.layout').appendChild(lv); }
+  return lv;
+}
+async function loadLeases() {
+  const panel = ensureLeasePanel(); panel.style.display='block';
+  panel.innerHTML = '<div style="padding:24px;color:var(--mut);font-size:13px">Loading lease agreements…</div>';
+  try {
+    const token = await getToken(); if (!token) { panel.innerHTML='<div style="padding:24px;color:#c0392b">Session expired — refresh and sign in.</div>'; return; }
+    let items=[], next=`https://graph.microsoft.com/v1.0/sites/${SP_SITE}/lists/${LEASE_LIST_ID}/items?$expand=fields&$top=200`;
+    while(next){ const r=await fetch(next,{headers:{Authorization:`Bearer ${token}`}}); if(!r.ok) throw new Error('HTTP '+r.status); const j=await r.json(); items=items.concat(j.value||[]); next=j['@odata.nextLink']||null; }
+    const val = x => (x && typeof x==='object' && 'Value' in x) ? x.Value : (x||'');
+    leases = items.map(it => { const f=it.fields||{}; return {
+      id: it.id,
+      leaseNo: f.LeaseNumber || (f.ApplicationId ? ('LA-'+f.ApplicationId) : ''),
+      title: f.Title || '', property: f.PropertyAddress || '',
+      tenant: [f.Tenant1,f.Tenant2,f.Tenant3,f.Tenant4].filter(Boolean).join(', ') || f.ApplicantName || '',
+      start: String(f.LeaseStart||'').slice(0,10), end: String(f.LeaseEnd||'').slice(0,10),
+      rent: f.MonthlyRent || '', status: val(f.LeaseStatus),
+      signedUrl: f.SignedPdfUrl || '', appLink: f.ApplicationLink || '',
+    }; });
+    leases.sort((a,b)=> (a.property||a.title).localeCompare(b.property||b.title));
+    renderLeases();
+  } catch(e){ panel.innerHTML = `<div style="padding:24px;color:#c0392b">Could not load leases: ${_escH(e.message)}</div>`; }
+}
+function renderLeases() {
+  const panel = document.getElementById('leaseView'); if (!panel) return;
+  const q = leaseSearch.toLowerCase().trim();
+  const rows = q ? leases.filter(l => (l.leaseNo+' '+l.title+' '+l.property+' '+l.tenant).toLowerCase().includes(q)) : leases;
+  const cell = (v,extra='') => `<td style="padding:8px 10px;${extra}">${v}</td>`;
+  panel.innerHTML = `
+  <div style="max-width:1200px;margin:0 auto;padding:6px 4px 40px">
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px">
+      <h2 style="font-size:17px;font-weight:700;margin:0">Lease Agreements
+        <span style="font-size:12px;color:var(--mut);font-weight:500">(${rows.length}${q?(' of '+leases.length):''})</span></h2>
+      <input type="text" value="${_escH(leaseSearch)}" placeholder="Search tenant, address, lease #…" oninput="leaseSearch=this.value;renderLeases()"
+        style="flex:1;min-width:220px;padding:7px 12px;border:1.5px solid var(--bdr);border-radius:8px;font-size:13px;background:var(--bg);color:var(--txt)">
+      <button class="btn btn-out" style="font-size:11px" onclick="loadLeases()">↻ Refresh</button>
+    </div>
+    <div style="overflow-x:auto;border:1px solid var(--bdr);border-radius:10px">
+      <table style="width:100%;border-collapse:collapse;font-size:12.5px;white-space:nowrap">
+        <thead><tr style="background:var(--card)">
+          ${['Lease #','Property','Tenant(s)','Start','End','Rent','Status','Documents'].map(h=>`<th style="padding:9px 10px;text-align:left;font-weight:700;border-bottom:1px solid var(--bdr)">${h}</th>`).join('')}
+        </tr></thead>
+        <tbody>
+          ${rows.map(l => `<tr style="border-top:1px solid var(--bdr)">
+            ${cell(_escH(l.leaseNo)||'—')}
+            ${cell(_escH(l.property||l.title),'white-space:normal;min-width:220px')}
+            ${cell(_escH(l.tenant),'white-space:normal')}
+            ${cell(l.start||'—')}${cell(l.end||'—')}
+            ${cell(l.rent?('$'+Number(l.rent).toLocaleString()):'—')}
+            ${cell(_escH(l.status)||'—')}
+            ${cell((l.signedUrl?`<a href="${_escH(_clnU(l.signedUrl))}" target="_blank" rel="noopener noreferrer">Open Lease ↗</a>`:'<span style="color:var(--mut)">—</span>')+(l.appLink?` · <a href="${_escH(_clnU(l.appLink))}" target="_blank" rel="noopener noreferrer">App</a>`:''))}
+          </tr>`).join('') || `<tr><td colspan="8" style="padding:24px;text-align:center;color:var(--mut)">No leases${q?' match your search':''}.</td></tr>`}
+        </tbody>
+      </table>
+    </div>
+  </div>`;
 }
 
 function populateReqSelect() {
