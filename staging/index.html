@@ -4523,7 +4523,7 @@ function switchView(v) {
 // ── LEASE AGREEMENTS DASHBOARD (admin) ───────────────────────────────────────
 let leases = [], leaseSearch = '';
 const _escH = s => (s==null?'':String(s)).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-const _clnU = u => (u||'').replace(/<[^>]*>/g,'').replace(/&#58;/g,':').replace(/&amp;/g,'&').replace(/&nbsp;/g,' ').trim();
+const _clnU = u => { if (u && typeof u === 'object') u = u.Url || u.url || u.href || ''; return String(u||'').replace(/<[^>]*>/g,'').replace(/&#58;/g,':').replace(/&amp;/g,'&').replace(/&nbsp;/g,' ').trim(); };
 function ensureLeasePanel() {
   let lv = document.getElementById('leaseView');
   if (!lv) { lv = document.createElement('div'); lv.id='leaseView'; lv.className='proc-view'; lv.style.display='none'; document.querySelector('.layout').appendChild(lv); }
