@@ -4558,7 +4558,7 @@ function renderLeases() {
   panel.innerHTML = `
   <div style="padding:6px 2px 40px">
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px">
-      <button class="btn btn-out" style="font-size:12px;white-space:nowrap" onclick="switchView('apps')">← Applications</button>
+      <button class="btn btn-pri" style="font-size:12px;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,.15)" onclick="switchView('apps')">← Applications</button>
       <h2 style="font-size:17px;font-weight:700;margin:0">Lease Agreements
         <span id="leaseCount" style="font-size:12px;color:var(--mut);font-weight:500"></span></h2>
       <input type="text" id="leaseSearchInput" value="${_escH(leaseSearch)}" placeholder="Search tenant, address, lease #…" oninput="leaseSearch=this.value;renderLeaseRows()"
