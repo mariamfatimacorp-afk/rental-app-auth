@@ -4539,15 +4539,12 @@ async function loadLeases() {
 }
 function renderLeases() {
   const panel = document.getElementById('leaseView'); if (!panel) return;
-  const q = leaseSearch.toLowerCase().trim();
-  const rows = q ? leases.filter(l => (l.leaseNo+' '+l.title+' '+l.property+' '+l.tenant).toLowerCase().includes(q)) : leases;
-  const cell = (v,extra='') => `<td style="padding:8px 10px;${extra}">${v}</td>`;
   panel.innerHTML = `
   <div style="max-width:1200px;margin:0 auto;padding:6px 4px 40px">
     <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px">
       <h2 style="font-size:17px;font-weight:700;margin:0">Lease Agreements
-        <span style="font-size:12px;color:var(--mut);font-weight:500">(${rows.length}${q?(' of '+leases.length):''})</span></h2>
-      <input type="text" value="${_escH(leaseSearch)}" placeholder="Search tenant, address, lease #…" oninput="leaseSearch=this.value;renderLeases()"
+        <span id="leaseCount" style="font-size:12px;color:var(--mut);font-weight:500"></span></h2>
+      <input type="text" id="leaseSearchInput" value="${_escH(leaseSearch)}" placeholder="Search tenant, address, lease #…" oninput="leaseSearch=this.value;renderLeaseRows()"
         style="flex:1;min-width:220px;padding:7px 12px;border:1.5px solid var(--bdr);border-radius:8px;font-size:13px;background:var(--bg);color:var(--txt)">
       <button class="btn btn-out" style="font-size:11px" onclick="loadLeases()">↻ Refresh</button>
     </div>
@@ -4556,20 +4553,28 @@ function renderLeases() {
         <thead><tr style="background:var(--card)">
           ${['Lease #','Property','Tenant(s)','Start','End','Rent','Status','Documents'].map(h=>`<th style="padding:9px 10px;text-align:left;font-weight:700;border-bottom:1px solid var(--bdr)">${h}</th>`).join('')}
         </tr></thead>
-        <tbody>
-          ${rows.map(l => `<tr style="border-top:1px solid var(--bdr)">
-            ${cell(_escH(l.leaseNo)||'—')}
-            ${cell(_escH(l.property||l.title),'white-space:normal;min-width:220px')}
-            ${cell(_escH(l.tenant),'white-space:normal')}
-            ${cell(l.start||'—')}${cell(l.end||'—')}
-            ${cell(l.rent?('$'+Number(l.rent).toLocaleString()):'—')}
-            ${cell(_escH(l.status)||'—')}
-            ${cell((l.signedUrl?`<a href="${_escH(_clnU(l.signedUrl))}" target="_blank" rel="noopener noreferrer">Open Lease ↗</a>`:'<span style="color:var(--mut)">—</span>')+(l.appLink?` · <a href="${_escH(_clnU(l.appLink))}" target="_blank" rel="noopener noreferrer">App</a>`:''))}
-          </tr>`).join('') || `<tr><td colspan="8" style="padding:24px;text-align:center;color:var(--mut)">No leases${q?' match your search':''}.</td></tr>`}
-        </tbody>
+        <tbody id="leaseTbody"></tbody>
       </table>
     </div>
   </div>`;
+  renderLeaseRows();
+}
+// Only redraws the rows (not the search box), so typing never loses focus.
+function renderLeaseRows() {
+  const tb = document.getElementById('leaseTbody'); if (!tb) return;
+  const q = leaseSearch.toLowerCase().trim();
+  const rows = q ? leases.filter(l => (l.leaseNo+' '+l.title+' '+l.property+' '+l.tenant).toLowerCase().includes(q)) : leases;
+  const cnt = document.getElementById('leaseCount'); if (cnt) cnt.textContent = '('+rows.length+(q?(' of '+leases.length):'')+')';
+  const cell = (v,extra='') => `<td style="padding:8px 10px;${extra}">${v}</td>`;
+  tb.innerHTML = rows.map(l => `<tr style="border-top:1px solid var(--bdr)">
+    ${cell(_escH(l.leaseNo)||'—')}
+    ${cell(_escH(l.property||l.title),'white-space:normal;min-width:220px')}
+    ${cell(_escH(l.tenant),'white-space:normal')}
+    ${cell(l.start||'—')}${cell(l.end||'—')}
+    ${cell(l.rent?('$'+Number(l.rent).toLocaleString()):'—')}
+    ${cell(_escH(l.status)||'—')}
+    ${cell((l.signedUrl?`<a href="${_escH(_clnU(l.signedUrl))}" target="_blank" rel="noopener noreferrer">Open Lease ↗</a>`:'<span style="color:var(--mut)">—</span>')+(l.appLink?` · <a href="${_escH(_clnU(l.appLink))}" target="_blank" rel="noopener noreferrer">App</a>`:''))}
+  </tr>`).join('') || `<tr><td colspan="8" style="padding:24px;text-align:center;color:var(--mut)">No leases${q?' match your search':''}.</td></tr>`;
 }
 
 function populateReqSelect() {
