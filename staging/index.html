@@ -872,6 +872,14 @@ async function getToken() {
 
 let currentUser = null;
 
+// Lease Agreements dashboard is restricted to the two owners (Umair & Mariam) only —
+// NOT all admins. Gated by explicit email allowlist so it can never leak to a future PM/admin.
+const LEASE_ACCESS = new Set([
+  'mariam@lasipmanagement.com','mariam@mfocorp.onmicrosoft.com',
+  'umair@lasipmanagement.com','umairlasi@gmail.com','usattar@hotmail.com'
+]);
+function canViewLeases(){ return !!(currentUser && LEASE_ACCESS.has((currentUser.email||'').toLowerCase().trim())); }
+
 // ── AUTH FLOW ─────────────────────────────────────────────────────────────────
     // Handles both loginRedirect and acquireTokenRedirect responses
 
@@ -896,8 +904,11 @@ function signIn(account) {
   document.getElementById('userRole').textContent = profile.role === 'admin' ? 'Administrator' : 'Property Manager';
    if (profile.role === 'admin') {
     document.getElementById('pmFilterWrap').style.display = 'block';
-    const sbl = document.getElementById('sbn-lease'); if (sbl) sbl.style.display = '';
     // Admins default to "All Property Managers" (no group pre-select); Sync-to-PMs button removed.
+  }
+  // Lease Agreements tab: Umair & Mariam only (see LEASE_ACCESS).
+  if (LEASE_ACCESS.has(email)) {
+    const sbl = document.getElementById('sbn-lease'); if (sbl) sbl.style.display = '';
   }
   loadApplications();
 }
@@ -4495,6 +4506,8 @@ const CONFIG = { n8nSendRequirements: '' };
 
 function switchView(v) {
   const isApps = v === 'apps', isLease = v === 'lease';
+  if (isLease && !canViewLeases()) { alert('Lease Agreements are restricted to Umair and Mariam.'); return; }
+  document.querySelector('aside').style.display = isLease ? 'none' : '';
   document.querySelector('.sbhead').style.display = isApps ? '' : 'none';
   document.getElementById('alist').style.display = isApps ? '' : 'none';
   document.getElementById('main').style.display = isApps ? '' : 'none';
@@ -4517,6 +4530,7 @@ function ensureLeasePanel() {
   return lv;
 }
 async function loadLeases() {
+  if (!canViewLeases()) return;
   const panel = ensureLeasePanel(); panel.style.display='block';
   panel.innerHTML = '<div style="padding:24px;color:var(--mut);font-size:13px">Loading lease agreements…</div>';
   try {
@@ -4530,8 +4544,10 @@ async function loadLeases() {
       title: f.Title || '', property: f.PropertyAddress || '',
       tenant: [f.Tenant1,f.Tenant2,f.Tenant3,f.Tenant4].filter(Boolean).join(', ') || f.ApplicantName || '',
       start: String(f.LeaseStart||'').slice(0,10), end: String(f.LeaseEnd||'').slice(0,10),
-      rent: f.MonthlyRent || '', status: val(f.LeaseStatus),
-      signedUrl: f.SignedPdfUrl || '', appLink: f.ApplicationLink || '',
+      rent: f.MonthlyRent || '', deposit: f.SecurityDeposit || '',
+      dueDate: f.MonthlyRentDueDate || '', utilities: f.UtilityCustom || val(f.Utilities) || '',
+      status: val(f.LeaseStatus),
+      signedUrl: f.SignedPdfUrl || '', possessionUrl: f.PossessionCheckinDoc || '', appLink: f.ApplicationLink || '',
     }; });
     leases.sort((a,b)=> (a.property||a.title).localeCompare(b.property||b.title));
     renderLeases();
@@ -4540,18 +4556,19 @@ async function loadLeases() {
 function renderLeases() {
   const panel = document.getElementById('leaseView'); if (!panel) return;
   panel.innerHTML = `
-  <div style="max-width:1200px;margin:0 auto;padding:6px 4px 40px">
-    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px">
+  <div style="padding:6px 2px 40px">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px">
+      <button class="btn btn-out" style="font-size:12px;white-space:nowrap" onclick="switchView('apps')">← Applications</button>
       <h2 style="font-size:17px;font-weight:700;margin:0">Lease Agreements
         <span id="leaseCount" style="font-size:12px;color:var(--mut);font-weight:500"></span></h2>
       <input type="text" id="leaseSearchInput" value="${_escH(leaseSearch)}" placeholder="Search tenant, address, lease #…" oninput="leaseSearch=this.value;renderLeaseRows()"
         style="flex:1;min-width:220px;padding:7px 12px;border:1.5px solid var(--bdr);border-radius:8px;font-size:13px;background:var(--bg);color:var(--txt)">
-      <button class="btn btn-out" style="font-size:11px" onclick="loadLeases()">↻ Refresh</button>
+      <button class="btn btn-out" style="font-size:11px;white-space:nowrap" onclick="loadLeases()">↻ Refresh</button>
     </div>
     <div style="overflow-x:auto;border:1px solid var(--bdr);border-radius:10px">
-      <table style="width:100%;border-collapse:collapse;font-size:12.5px;white-space:nowrap">
+      <table style="width:100%;border-collapse:collapse;font-size:12.5px">
         <thead><tr style="background:var(--card)">
-          ${['Lease #','Property','Tenant(s)','Start','End','Rent','Status','Documents'].map(h=>`<th style="padding:9px 10px;text-align:left;font-weight:700;border-bottom:1px solid var(--bdr)">${h}</th>`).join('')}
+          ${['Lease #','Property','Tenant(s)','Start','End','Rent','Due','Deposit','Utilities','Status','Documents'].map(h=>`<th style="padding:9px 10px;text-align:left;font-weight:700;border-bottom:1px solid var(--bdr);white-space:nowrap">${h}</th>`).join('')}
         </tr></thead>
         <tbody id="leaseTbody"></tbody>
       </table>
@@ -4565,16 +4582,23 @@ function renderLeaseRows() {
   const q = leaseSearch.toLowerCase().trim();
   const rows = q ? leases.filter(l => (l.leaseNo+' '+l.title+' '+l.property+' '+l.tenant).toLowerCase().includes(q)) : leases;
   const cnt = document.getElementById('leaseCount'); if (cnt) cnt.textContent = '('+rows.length+(q?(' of '+leases.length):'')+')';
-  const cell = (v,extra='') => `<td style="padding:8px 10px;${extra}">${v}</td>`;
-  tb.innerHTML = rows.map(l => `<tr style="border-top:1px solid var(--bdr)">
-    ${cell(_escH(l.leaseNo)||'—')}
-    ${cell(_escH(l.property||l.title),'white-space:normal;min-width:220px')}
-    ${cell(_escH(l.tenant),'white-space:normal')}
-    ${cell(l.start||'—')}${cell(l.end||'—')}
-    ${cell(l.rent?('$'+Number(l.rent).toLocaleString()):'—')}
-    ${cell(_escH(l.status)||'—')}
-    ${cell((l.signedUrl?`<a href="${_escH(_clnU(l.signedUrl))}" target="_blank" rel="noopener noreferrer">Open Lease ↗</a>`:'<span style="color:var(--mut)">—</span>')+(l.appLink?` · <a href="${_escH(_clnU(l.appLink))}" target="_blank" rel="noopener noreferrer">App</a>`:''))}
-  </tr>`).join('') || `<tr><td colspan="8" style="padding:24px;text-align:center;color:var(--mut)">No leases${q?' match your search':''}.</td></tr>`;
+  const cell = (v,extra='') => `<td style="padding:8px 10px;vertical-align:top;${extra}">${v}</td>`;
+  const money = v => v ? ('$'+Number(v).toLocaleString()) : '—';
+  const link = (u,label) => u ? `<a href="${_escH(_clnU(u))}" target="_blank" rel="noopener noreferrer">${label} ↗</a>` : '';
+  tb.innerHTML = rows.map(l => {
+    const docs = [link(l.signedUrl,'Lease'), link(l.possessionUrl,'Check-in'), (l.appLink?`<a href="${_escH(_clnU(l.appLink))}" target="_blank" rel="noopener noreferrer">App</a>`:'')].filter(Boolean).join(' · ') || '<span style="color:var(--mut)">—</span>';
+    return `<tr style="border-top:1px solid var(--bdr)">
+    ${cell(_escH(l.leaseNo)||'—','white-space:nowrap')}
+    ${cell(_escH(l.property||l.title),'min-width:190px')}
+    ${cell(_escH(l.tenant),'min-width:140px')}
+    ${cell(l.start||'—','white-space:nowrap')}${cell(l.end||'—','white-space:nowrap')}
+    ${cell(money(l.rent),'white-space:nowrap')}
+    ${cell(_escH(l.dueDate)||'—','white-space:nowrap')}
+    ${cell(money(l.deposit),'white-space:nowrap')}
+    ${cell(_escH(l.utilities)||'—','min-width:170px;white-space:normal;font-size:11.5px')}
+    ${cell(_escH(l.status)||'—','white-space:nowrap')}
+    ${cell(docs,'white-space:nowrap')}
+  </tr>`; }).join('') || `<tr><td colspan="11" style="padding:24px;text-align:center;color:var(--mut)">No leases${q?' match your search':''}.</td></tr>`;
 }
 
 function populateReqSelect() {
