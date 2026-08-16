@@ -4545,7 +4545,7 @@ async function loadLeases() {
       tenant: [f.Tenant1,f.Tenant2,f.Tenant3,f.Tenant4].filter(Boolean).join(', ') || f.ApplicantName || '',
       start: String(f.LeaseStart||'').slice(0,10), end: String(f.LeaseEnd||'').slice(0,10),
       rent: f.MonthlyRent || '', deposit: f.SecurityDeposit || '',
-      dueDate: f.MonthlyRentDueDate || '', utilities: f.UtilityCustom || val(f.Utilities) || '',
+      dueDate: f.MonthlyRentDueDate || '', utilAmount: (f.UtilityAmount!=null?f.UtilityAmount:''), utilities: f.UtilityCustom || val(f.Utilities) || '',
       status: val(f.LeaseStatus),
       signedUrl: f.SignedPdfUrl || '', possessionUrl: f.PossessionCheckinDoc || '', appLink: f.ApplicationLink || '',
     }; });
@@ -4568,7 +4568,7 @@ function renderLeases() {
     <div style="overflow-x:auto;border:1px solid var(--bdr);border-radius:10px">
       <table style="width:100%;border-collapse:collapse;font-size:12.5px">
         <thead><tr style="background:var(--card)">
-          ${['Lease #','Property','Tenant(s)','Start','End','Rent','Due','Deposit','Utilities','Status','Documents'].map(h=>`<th style="padding:9px 10px;text-align:left;font-weight:700;border-bottom:1px solid var(--bdr);white-space:nowrap">${h}</th>`).join('')}
+          ${['Lease #','Property','Tenant(s)','Start','End','Rent','Due','Deposit','Utilities','Status','Lease PDF','Check-in'].map(h=>`<th style="padding:9px 10px;text-align:left;font-weight:700;border-bottom:1px solid var(--bdr);white-space:nowrap">${h}</th>`).join('')}
         </tr></thead>
         <tbody id="leaseTbody"></tbody>
       </table>
@@ -4586,7 +4586,11 @@ function renderLeaseRows() {
   const money = v => v ? ('$'+Number(v).toLocaleString()) : '—';
   const link = (u,label) => u ? `<a href="${_escH(_clnU(u))}" target="_blank" rel="noopener noreferrer">${label} ↗</a>` : '';
   tb.innerHTML = rows.map(l => {
-    const docs = [link(l.signedUrl,'Lease'), link(l.possessionUrl,'Check-in'), (l.appLink?`<a href="${_escH(_clnU(l.appLink))}" target="_blank" rel="noopener noreferrer">App</a>`:'')].filter(Boolean).join(' · ') || '<span style="color:var(--mut)">—</span>';
+    const leaseDoc = [link(l.signedUrl,'Lease'), (l.appLink?`<a href="${_escH(_clnU(l.appLink))}" target="_blank" rel="noopener noreferrer">App</a>`:'')].filter(Boolean).join(' · ') || '<span style="color:var(--mut)">—</span>';
+    const checkinDoc = link(l.possessionUrl,'Check-in') || '<span style="color:var(--mut)">—</span>';
+    const util = (l.utilAmount!=='' && l.utilAmount!=null)
+      ? ('$'+Number(l.utilAmount).toLocaleString()+'/mo')
+      : (l.utilities ? `<span style="color:var(--mut);font-size:11px" title="${_escH(l.utilities)}">${_escH(l.utilities.length>34?l.utilities.slice(0,34)+'…':l.utilities)}</span>` : '—');
     return `<tr style="border-top:1px solid var(--bdr)">
     ${cell(_escH(l.leaseNo)||'—','white-space:nowrap')}
     ${cell(_escH(l.property||l.title),'min-width:190px')}
@@ -4595,10 +4599,11 @@ function renderLeaseRows() {
     ${cell(money(l.rent),'white-space:nowrap')}
     ${cell(_escH(l.dueDate)||'—','white-space:nowrap')}
     ${cell(money(l.deposit),'white-space:nowrap')}
-    ${cell(_escH(l.utilities)||'—','min-width:170px;white-space:normal;font-size:11.5px')}
+    ${cell(util,'min-width:120px;white-space:normal')}
     ${cell(_escH(l.status)||'—','white-space:nowrap')}
-    ${cell(docs,'white-space:nowrap')}
-  </tr>`; }).join('') || `<tr><td colspan="11" style="padding:24px;text-align:center;color:var(--mut)">No leases${q?' match your search':''}.</td></tr>`;
+    ${cell(leaseDoc,'white-space:nowrap')}
+    ${cell(checkinDoc,'white-space:nowrap')}
+  </tr>`; }).join('') || `<tr><td colspan="12" style="padding:24px;text-align:center;color:var(--mut)">No leases${q?' match your search':''}.</td></tr>`;
 }
 
 function populateReqSelect() {
