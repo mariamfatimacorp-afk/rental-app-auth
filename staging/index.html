@@ -4590,7 +4590,7 @@ function renderLeaseRows() {
     const checkinDoc = link(l.possessionUrl,'Check-in') || '<span style="color:var(--mut)">—</span>';
     const util = (l.utilAmount!=='' && l.utilAmount!=null)
       ? ('$'+Number(l.utilAmount).toLocaleString()+'/mo')
-      : (l.utilities ? `<span style="color:var(--mut);font-size:11px" title="${_escH(l.utilities)}">${_escH(l.utilities.length>34?l.utilities.slice(0,34)+'…':l.utilities)}</span>` : '—');
+      : (l.utilities ? `<span title="${_escH(l.utilities)}">${_escH(l.utilities.length>44?l.utilities.slice(0,44)+'…':l.utilities)}</span>` : '—');
     return `<tr style="border-top:1px solid var(--bdr)">
     ${cell(_escH(l.leaseNo)||'—','white-space:nowrap')}
     ${cell(_escH(l.property||l.title),'min-width:190px')}
