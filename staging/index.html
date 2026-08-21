@@ -4426,7 +4426,7 @@ function switchView(v) {
 let leases = [], leaseSearch = '', leaseStatusFilter = '', leaseSort = { k:'', dir:1 };
 const LEASE_COLS = [
   {h:'Lease #',k:'leaseNo'},{h:'Property',k:'property'},{h:'Unit',k:'unit'},{h:'Tenant(s)',k:'tenant'},
-  {h:'Start',k:'start'},{h:'End',k:'end'},{h:'Rent',k:'rent',num:1},{h:'Due',k:'dueDate'},
+  {h:'Start',k:'start',date:1},{h:'End',k:'end',date:1},{h:'Rent',k:'rent',num:1},{h:'Due',k:'dueDate'},
   {h:'Deposit',k:'deposit',num:1},{h:'Status',k:'status'},
   // Utilities column hidden until per-lease values are extracted from the PDFs — re-add {h:'Utilities',k:'utilities'} to restore
   {h:'Lease PDF',k:'signedUrl',nosort:1},{h:'Check-in',k:'possessionUrl',nosort:1},{h:'Edit',k:'rowUrl',nosort:1},
@@ -4462,7 +4462,9 @@ async function loadLeases() {
       signedUrl: f.SignedPdfUrl || '', possessionUrl: f.PossessionCheckinDoc || '', appLink: f.ApplicationLink || '',
     }; });
     leases = leases.filter(l => !/test tenant/i.test((l.tenant||'') + ' ' + (l.title||'')));
-    leases.sort((a,b)=> (a.property||a.title).localeCompare(b.property||b.title));
+    leases.sort((a,b)=> (a.property||a.title).localeCompare(b.property||b.title, undefined, {numeric:true, sensitivity:'base'})
+      || ((Date.parse(b.start)||0)-(Date.parse(a.start)||0))                          // same address → newest lease first
+      || String(a.leaseNo).localeCompare(String(b.leaseNo), undefined, {numeric:true}));
     renderLeases();
   } catch(e){ panel.innerHTML = `<div style="padding:24px;color:#c0392b">Could not load leases: ${_escH(e.message)}</div>`; }
 }
@@ -4509,12 +4511,21 @@ function renderLeaseRows() {
   });
   if (leaseSort.k) {
     const col = LEASE_COLS.find(c=>c.k===leaseSort.k), d = leaseSort.dir;
-    rows = rows.slice().sort((a,b)=>{
+    const cmp = (a,b) => {
       let x=a[leaseSort.k], y=b[leaseSort.k];
       if (col && col.num) return ((Number(x)||0)-(Number(y)||0))*d;
-      x=(x==null?'':x).toString().toLowerCase(); y=(y==null?'':y).toString().toLowerCase();
-      return x<y?-d : x>y?d : 0;
-    });
+      if (col && col.date) {
+        const tx=x?Date.parse(x):NaN, ty=y?Date.parse(y):NaN;
+        if (isNaN(tx) && isNaN(ty)) return 0;
+        if (isNaN(tx)) return 1; if (isNaN(ty)) return -1;   // blank dates always sink to the bottom
+        return (tx-ty)*d;
+      }
+      x=(x==null?'':x).toString(); y=(y==null?'':y).toString();
+      return x.localeCompare(y, undefined, {numeric:true, sensitivity:'base'})*d;   // natural order: LA-2 before LA-10
+    };
+    rows = rows.slice().sort((a,b)=> cmp(a,b)
+      || ((Date.parse(b.start)||0)-(Date.parse(a.start)||0))                         // tiebreak: newest lease first
+      || String(a.leaseNo).localeCompare(String(b.leaseNo), undefined, {numeric:true}));
   }
   const cnt = document.getElementById('leaseCount'); if (cnt) cnt.textContent = '('+rows.length+((q||leaseStatusFilter)?(' of '+leases.length):'')+')';
   const cell = (v,extra='') => `<td style="padding:8px 10px;vertical-align:top;${extra}">${v}</td>`;
