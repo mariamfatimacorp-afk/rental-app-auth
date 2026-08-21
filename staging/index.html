@@ -4427,7 +4427,8 @@ let leases = [], leaseSearch = '', leaseStatusFilter = '', leaseSort = { k:'', d
 const LEASE_COLS = [
   {h:'Lease #',k:'leaseNo'},{h:'Property',k:'property'},{h:'Unit',k:'unit'},{h:'Tenant(s)',k:'tenant'},
   {h:'Start',k:'start'},{h:'End',k:'end'},{h:'Rent',k:'rent',num:1},{h:'Due',k:'dueDate'},
-  {h:'Deposit',k:'deposit',num:1},{h:'Utilities',k:'utilities'},{h:'Status',k:'status'},
+  {h:'Deposit',k:'deposit',num:1},{h:'Status',k:'status'},
+  // Utilities column hidden until per-lease values are extracted from the PDFs — re-add {h:'Utilities',k:'utilities'} to restore
   {h:'Lease PDF',k:'signedUrl',nosort:1},{h:'Check-in',k:'possessionUrl',nosort:1},
 ];
 function sortLease(k){ if(leaseSort.k===k) leaseSort.dir*=-1; else { leaseSort.k=k; leaseSort.dir=1; } renderLeases(); }
@@ -4459,6 +4460,7 @@ async function loadLeases() {
       status: val(f.LeaseStatus),
       signedUrl: f.SignedPdfUrl || '', possessionUrl: f.PossessionCheckinDoc || '', appLink: f.ApplicationLink || '',
     }; });
+    leases = leases.filter(l => !/test tenant/i.test((l.tenant||'') + ' ' + (l.title||'')));
     leases.sort((a,b)=> (a.property||a.title).localeCompare(b.property||b.title));
     renderLeases();
   } catch(e){ panel.innerHTML = `<div style="padding:24px;color:#c0392b">Could not load leases: ${_escH(e.message)}</div>`; }
@@ -4532,11 +4534,10 @@ function renderLeaseRows() {
     ${cell(money(l.rent),'white-space:nowrap')}
     ${cell(_escH(l.dueDate)||'—','white-space:nowrap')}
     ${cell(money(l.deposit),'white-space:nowrap')}
-    ${cell(util,'min-width:120px;white-space:normal')}
     ${cell(_escH(l.status)||'—','white-space:nowrap')}
     ${cell(leaseDoc,'white-space:nowrap')}
     ${cell(checkinDoc,'white-space:nowrap')}
-  </tr>`; }).join('') || `<tr><td colspan="13" style="padding:24px;text-align:center;color:var(--mut)">No leases${(q||leaseStatusFilter)?' match the filter':''}.</td></tr>`;
+  </tr>`; }).join('') || `<tr><td colspan="12" style="padding:24px;text-align:center;color:var(--mut)">No leases${(q||leaseStatusFilter)?' match the filter':''}.</td></tr>`;
 }
 
 function populateReqSelect() {
