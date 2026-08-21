@@ -4429,7 +4429,7 @@ const LEASE_COLS = [
   {h:'Start',k:'start'},{h:'End',k:'end'},{h:'Rent',k:'rent',num:1},{h:'Due',k:'dueDate'},
   {h:'Deposit',k:'deposit',num:1},{h:'Status',k:'status'},
   // Utilities column hidden until per-lease values are extracted from the PDFs — re-add {h:'Utilities',k:'utilities'} to restore
-  {h:'Lease PDF',k:'signedUrl',nosort:1},{h:'Check-in',k:'possessionUrl',nosort:1},
+  {h:'Lease PDF',k:'signedUrl',nosort:1},{h:'Check-in',k:'possessionUrl',nosort:1},{h:'Edit',k:'rowUrl',nosort:1},
 ];
 function sortLease(k){ if(leaseSort.k===k) leaseSort.dir*=-1; else { leaseSort.k=k; leaseSort.dir=1; } renderLeases(); }
 const _escH = s => (s==null?'':String(s)).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -4449,7 +4449,7 @@ async function loadLeases() {
     while(next){ const r=await fetch(next,{headers:{Authorization:`Bearer ${token}`}}); if(!r.ok) throw new Error('HTTP '+r.status); const j=await r.json(); items=items.concat(j.value||[]); next=j['@odata.nextLink']||null; }
     const val = x => (x && typeof x==='object' && 'Value' in x) ? x.Value : (x||'');
     leases = items.map(it => { const f=it.fields||{}; return {
-      id: it.id,
+      id: it.id, rowUrl: it.webUrl || '',
       leaseNo: f.LeaseNumber || (f.ApplicationId ? ('LA-'+f.ApplicationId) : ''),
       title: f.Title || '', property: f.PropertyAddress || '',
       tenant: [f.Tenant1,f.Tenant2,f.Tenant3,f.Tenant4].filter(Boolean).join(', ') || f.ApplicantName || '',
@@ -4537,7 +4537,8 @@ function renderLeaseRows() {
     ${cell(_escH(l.status)||'—','white-space:nowrap')}
     ${cell(leaseDoc,'white-space:nowrap')}
     ${cell(checkinDoc,'white-space:nowrap')}
-  </tr>`; }).join('') || `<tr><td colspan="12" style="padding:24px;text-align:center;color:var(--mut)">No leases${(q||leaseStatusFilter)?' match the filter':''}.</td></tr>`;
+    ${cell(l.rowUrl?`<a href="${_escH(l.rowUrl)}" target="_blank" rel="noopener noreferrer" title="Open this lease's SharePoint item to edit its details">✎ Edit ↗</a>`:'—','white-space:nowrap')}
+  </tr>`; }).join('') || `<tr><td colspan="13" style="padding:24px;text-align:center;color:var(--mut)">No leases${(q||leaseStatusFilter)?' match the filter':''}.</td></tr>`;
 }
 
 function populateReqSelect() {
