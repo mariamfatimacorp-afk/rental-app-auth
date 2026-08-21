@@ -4448,8 +4448,9 @@ async function loadLeases() {
     let items=[], next=`https://graph.microsoft.com/v1.0/sites/${SP_SITE}/lists/${LEASE_LIST_ID}/items?$expand=fields&$top=200`;
     while(next){ const r=await fetch(next,{headers:{Authorization:`Bearer ${token}`}}); if(!r.ok) throw new Error('HTTP '+r.status); const j=await r.json(); items=items.concat(j.value||[]); next=j['@odata.nextLink']||null; }
     const val = x => (x && typeof x==='object' && 'Value' in x) ? x.Value : (x||'');
+    let listUrl=''; try { listUrl = (await (await fetch(`https://graph.microsoft.com/v1.0/sites/${SP_SITE}/lists/${LEASE_LIST_ID}?$select=webUrl`,{headers:{Authorization:`Bearer ${token}`}})).json()).webUrl || ''; } catch(e){}
     leases = items.map(it => { const f=it.fields||{}; return {
-      id: it.id, rowUrl: it.webUrl || '',
+      id: it.id, rowUrl: listUrl ? (listUrl + '/DispForm.aspx?ID=' + it.id) : (it.webUrl || ''),
       leaseNo: f.LeaseNumber || (f.ApplicationId ? ('LA-'+f.ApplicationId) : ''),
       title: f.Title || '', property: f.PropertyAddress || '',
       tenant: [f.Tenant1,f.Tenant2,f.Tenant3,f.Tenant4].filter(Boolean).join(', ') || f.ApplicantName || '',
