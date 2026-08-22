@@ -4489,6 +4489,7 @@ function renderLeases() {
         <option value="">All statuses</option>
         ${statuses.map(s=>`<option value="${_escH(s)}" ${leaseStatusFilter===s?'selected':''}>${_escH(s)}</option>`).join('')}
       </select>
+      <button class="btn btn-acc" style="font-size:11px;white-space:nowrap" onclick="openAddLease()">➕ Add Lease</button>
       <button class="btn btn-out" style="font-size:11px;white-space:nowrap" onclick="loadLeases()">↻ Refresh</button>
     </div>
     <div style="overflow-x:auto;border:1px solid var(--bdr);border-radius:10px">
@@ -4551,6 +4552,191 @@ function renderLeaseRows() {
     ${cell(checkinDoc,'white-space:nowrap')}
     ${cell(l.rowUrl?`<a href="${_escH(l.rowUrl)}" target="_blank" rel="noopener noreferrer" title="Open this lease's SharePoint item to edit its details">✎ Edit ↗</a>`:'—','white-space:nowrap')}
   </tr>`; }).join('') || `<tr><td colspan="13" style="padding:24px;text-align:center;color:var(--mut)">No leases${(q||leaseStatusFilter)?' match the filter':''}.</td></tr>`;
+}
+
+// ── ADD LEASE (manual / onboard / upload-to-new-row) ───────────────────────────
+// Creates a Lease Agreement row OUTSIDE the rental-application pipeline: for an
+// acquired property with a sitting tenant, a manual add by Umair, or a signed
+// lease uploaded with no application behind it. Non-application leases are
+// numbered with an M-## prefix so they never collide with the LA-<ApplicationId>
+// numbering. PDF upload is best-effort auto-fill — nothing is written until Save.
+let _leasePdfFile = null;
+function nextManualLeaseNo(){
+  let mx=0;
+  leases.forEach(l=>{ const m=/^M-(\d+)$/i.exec(String(l.leaseNo||'').trim()); if(m) mx=Math.max(mx,parseInt(m[1],10)); });
+  return 'M-'+String(mx+1).padStart(2,'0');
+}
+function _unitOptions(sel){
+  const base=['Upper','Basement','Main Unit','House','Entire House','Unit 1','Unit 2','Unit 3','Unit 4','Unit 5'];
+  const all=[...new Set([...base, ...leases.map(l=>l.unit).filter(Boolean)])];
+  return '<option value="">— select —</option>'+all.map(u=>`<option ${u===sel?'selected':''}>${_escH(u)}</option>`).join('');
+}
+function _statusOptions(sel){
+  const base=['Draft','Final','Signed','Expired','Property Removed'];
+  const all=[...new Set([...base, ...leases.map(l=>l.status).filter(Boolean)])];
+  return all.map(s=>`<option ${s===sel?'selected':''}>${_escH(s)}</option>`).join('');
+}
+function openAddLease(){
+  if(!canViewLeases()) return;
+  _leasePdfFile=null;
+  const old=document.getElementById('addLeaseModal'); if(old) old.remove();
+  const inp=(id,type='text',ph='')=>`<input id="${id}" type="${type}" placeholder="${ph}" style="padding:7px 9px;border:1.5px solid var(--bdr);border-radius:7px;font-size:13px;background:var(--bg);color:var(--txt);font-weight:400">`;
+  const fld=(label,inner)=>`<label style="display:flex;flex-direction:column;gap:3px;font-size:11px;font-weight:600;color:var(--mut)">${label}${inner}</label>`;
+  const selStyle='padding:7px 9px;border:1.5px solid var(--bdr);border-radius:7px;font-size:13px;background:var(--bg);color:var(--txt)';
+  const div=document.createElement('div');
+  div.id='addLeaseModal';
+  div.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;display:flex;align-items:flex-start;justify-content:center;overflow-y:auto;padding:30px 16px';
+  div.innerHTML=`
+    <div style="background:var(--bg);color:var(--txt);border-radius:14px;max-width:720px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.4);padding:22px 24px 26px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+        <h2 style="font-size:17px;font-weight:700;margin:0">➕ Add Lease <span style="font-size:12px;color:var(--mut);font-weight:500">— onboard / manual entry</span></h2>
+        <button onclick="closeAddLease()" style="background:none;border:none;font-size:24px;cursor:pointer;color:var(--mut);line-height:1">×</button>
+      </div>
+      <div style="background:var(--card);border:1px dashed var(--bdr);border-radius:9px;padding:12px 14px;margin:10px 0 16px">
+        <div style="font-size:12px;font-weight:600;margin-bottom:6px">📄 Upload lease PDF to auto-fill <span style="color:var(--mut);font-weight:400">— optional; review every field before saving</span></div>
+        <input type="file" accept="application/pdf" id="alPdf" onchange="onLeasePdfPicked(this)" style="font-size:12px">
+        <div id="alPdfStatus" style="font-size:11px;color:var(--mut);margin-top:6px"></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:11px">
+        ${fld('Lease #',`<input id="alLeaseNo" type="text" value="${nextManualLeaseNo()}" style="${selStyle};background:var(--card);font-weight:600">`)}
+        ${fld('Status',`<select id="alStatus" style="${selStyle}">${_statusOptions('Signed')}</select>`)}
+        ${fld('Property Address <span style="color:#c0392b">*</span>',inp('alAddress','text','411-333 Riverfront Ave SE'))}
+        ${fld('Unit',`<select id="alUnit" style="${selStyle}">${_unitOptions('')}</select>`)}
+        ${fld('Tenant 1 <span style="color:#c0392b">*</span>',inp('alTenant1'))}
+        ${fld('Tenant 2',inp('alTenant2'))}
+        ${fld('Tenant 3',inp('alTenant3'))}
+        ${fld('Tenant 4',inp('alTenant4'))}
+        ${fld('Lease Start',inp('alStart','date'))}
+        ${fld('Lease End',inp('alEnd','date'))}
+        ${fld('Monthly Rent ($)',inp('alRent','number','1500'))}
+        ${fld('Security Deposit ($)',inp('alDeposit','number'))}
+        ${fld('Rent Due Date',inp('alDue','text','1st of month'))}
+        ${fld('Landlord',inp('alLandlord'))}
+        ${fld('Utilities',inp('alUtil','text','e.g. 60/40 split, or $150/mo'))}
+        ${fld('Assigned PM / Contact',`<select id="alPm" style="${selStyle}"><option value="">— select —</option>${PM_OPTIONS.map(o=>`<option value="${o.email}" ${o.email==='umair@lasipmanagement.com'?'selected':''}>${_escH(o.name)}</option>`).join('')}</select>`)}
+      </div>
+      <div id="alError" style="display:none;color:#c0392b;font-size:12px;margin-top:12px"></div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;align-items:center;margin-top:18px">
+        ${IS_SANDBOX?'<span style="font-size:11px;color:#b8860b;margin-right:auto">🧪 Sandbox — Save previews only, no live write.</span>':''}
+        <button class="btn btn-out" onclick="closeAddLease()" style="font-size:13px">Cancel</button>
+        <button class="btn btn-acc" id="alSaveBtn" onclick="saveNewLease()" style="font-size:13px">Save Lease</button>
+      </div>
+    </div>`;
+  document.body.appendChild(div);
+  div.addEventListener('click',e=>{ if(e.target===div) closeAddLease(); });
+}
+function closeAddLease(){ const m=document.getElementById('addLeaseModal'); if(m) m.remove(); _leasePdfFile=null; }
+
+// Parse loose date strings (ISO, "January 1, 2026", "1 Jan 2026", "01/01/2026") → YYYY-MM-DD
+function _parseLooseDate(s){
+  if(!s) return ''; s=String(s).trim();
+  let m=s.match(/(\d{4})-(\d{2})-(\d{2})/); if(m) return `${m[1]}-${m[2]}-${m[3]}`;
+  const MON={jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12};
+  m=s.match(/([A-Za-z]{3,9})\.?\s+(\d{1,2}),?\s+(\d{4})/);
+  if(m){const mo=MON[m[1].slice(0,3).toLowerCase()]; if(mo) return `${m[3]}-${String(mo).padStart(2,'0')}-${String(m[2]).padStart(2,'0')}`;}
+  m=s.match(/(\d{1,2})\s+([A-Za-z]{3,9})\.?,?\s+(\d{4})/);
+  if(m){const mo=MON[m[2].slice(0,3).toLowerCase()]; if(mo) return `${m[3]}-${String(mo).padStart(2,'0')}-${String(m[1]).padStart(2,'0')}`;}
+  m=s.match(/(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})/);
+  if(m){let y=m[3]; if(y.length===2)y='20'+y; return `${y}-${String(m[1]).padStart(2,'0')}-${String(m[2]).padStart(2,'0')}`;}
+  return '';
+}
+// Best-effort field extraction from lease text. Review-before-save makes misses safe.
+function _parseLeaseFields(t){
+  const out={}, T=String(t||'').replace(/\r/g,'');
+  const DATE='((?:\\d{4}-\\d{2}-\\d{2})|(?:[A-Za-z]{3,9}\\.?\\s+\\d{1,2},?\\s+\\d{4})|(?:\\d{1,2}\\s+[A-Za-z]{3,9}\\.?,?\\s+\\d{4})|(?:\\d{1,2}[\\/-]\\d{1,2}[\\/-]\\d{2,4}))';
+  let m = T.match(/\$\s*([\d,]{3,}(?:\.\d{2})?)\s*(?:per\s+month|\/\s*month|monthly|a\s+month|p\.?m\.?)/i)
+       || T.match(/(?:monthly\s+rent|rent\s+of|rent\s+shall\s+be|\brent\b[:\s])[^\$\d]{0,25}\$?\s*([\d,]{3,}(?:\.\d{2})?)/i);
+  if(m) out.rent=m[1].replace(/,/g,'');
+  m = T.match(/(?:security|damage)\s+deposit[^\$\d]{0,30}\$?\s*([\d,]{2,}(?:\.\d{2})?)/i);
+  if(m) out.deposit=m[1].replace(/,/g,'');
+  m = T.match(new RegExp('(?:commenc\\w*|shall\\s+begin|lease\\s+start|start\\s+date|beginning|term\\s+begins|effective)[^\\n]{0,45}?'+DATE,'i'));
+  if(m) out.start=_parseLooseDate(m[1]);
+  m = T.match(new RegExp('(?:expir\\w*|end\\s+date|terminat\\w*|shall\\s+end|ending|to\\s+and\\s+including|through)[^\\n]{0,45}?'+DATE,'i'));
+  if(m) out.end=_parseLooseDate(m[1]);
+  const nm = s => s ? s.replace(/\s{2,}/g,' ').replace(/\s*(?:,|\band\b|\bthe\b|\bhaving\b|\bof\b|\bresiding\b).*$/i,'').replace(/[,\s]+$/,'').trim() : '';
+  m = T.match(/landlord[\s:()\-]*(?:name)?[:\s]*([A-Z0-9][A-Za-z0-9 .,'&\-]{2,55})/);
+  if(m){ const v=nm(m[1]); if(v.length>=2 && v.length<=45) out.landlord=v; }
+  m = T.match(/tenant[\s:()\-]*(?:name)?[:\s]*([A-Z][A-Za-z .,'&\-]{2,55})/);
+  if(m){ const v=nm(m[1]); if(v.length>=2 && v.length<=45) out.tenant1=v; }
+  return out;
+}
+async function extractLeaseText(file){
+  initPdfJs();
+  const buffer=await file.arrayBuffer();
+  const pdf=await pdfjsLib.getDocument({data:buffer}).promise;
+  let rawText='', ann=[];
+  for(let p=1;p<=pdf.numPages;p++){ const pg=await pdf.getPage(p); const as=await pg.getAnnotations(); for(const a of as){ if(a.fieldName&&a.fieldValue) ann.push(a.fieldName+': '+a.fieldValue); } }
+  for(let p=1;p<=pdf.numPages;p++){
+    const pg=await pdf.getPage(p), content=await pg.getTextContent(), midX=pg.getViewport({scale:1}).width/2, rowMap={};
+    for(const it of content.items){ if(!it.str.trim())continue; const y=Math.round(it.transform[5]/3)*3; (rowMap[y]=rowMap[y]||[]).push({x:it.transform[4],str:it.str}); }
+    Object.keys(rowMap).map(Number).sort((a,b)=>b-a).forEach(y=>{
+      const items=rowMap[y].sort((a,b)=>a.x-b.x);
+      const l=items.filter(i=>i.x<midX).map(i=>i.str).join(' ').trim();
+      const r=items.filter(i=>i.x>=midX).map(i=>i.str).join(' ').trim();
+      if(l)rawText+=l+'\n'; if(r)rawText+=r+'\n';
+    });
+  }
+  return (ann.join('\n')+'\n'+rawText);
+}
+async function onLeasePdfPicked(input){
+  const file=input.files&&input.files[0]; const st=document.getElementById('alPdfStatus');
+  if(!file) return;
+  if(!/\.pdf$/i.test(file.name)){ st.textContent='Please choose a PDF file.'; input.value=''; return; }
+  _leasePdfFile=file; st.textContent='⏳ Reading '+file.name+'…';
+  try{
+    const f=_parseLeaseFields(await extractLeaseText(file));
+    const set=(id,v)=>{ if(v==null||v==='')return; const el=document.getElementById(id); if(el&&!el.value) el.value=v; };
+    set('alRent',f.rent); set('alDeposit',f.deposit); set('alStart',f.start); set('alEnd',f.end); set('alLandlord',f.landlord); set('alTenant1',f.tenant1);
+    const n=Object.keys(f).filter(k=>f[k]).length;
+    st.innerHTML = n ? `✓ Auto-filled ${n} field${n>1?'s':''} — <b>review everything</b> before saving. The PDF will be attached to the row.`
+                     : 'PDF read, but no fields matched the templates — enter details manually. The PDF will still be attached.';
+  }catch(e){ st.textContent='⚠ Could not read the PDF ('+e.message+') — enter details manually. It will still be attached.'; }
+}
+async function saveNewLease(){
+  const v=id=>{ const el=document.getElementById(id); return el?el.value.trim():''; };
+  const err=document.getElementById('alError'); const show=m=>{ err.style.display='block'; err.textContent=m; };
+  err.style.display='none';
+  const address=v('alAddress'), tenant1=v('alTenant1'), status=v('alStatus'), pmEmail=v('alPm');
+  if(!address){ show('Property Address is required.'); return; }
+  if(!tenant1){ show('Tenant 1 is required.'); return; }
+  const pmName=(PM_OPTIONS.find(o=>o.email===pmEmail)||{}).name||'';
+  const fields={ LeaseNumber:v('alLeaseNo'), PropertyAddress:address, Tenant1:tenant1, LeaseStatus:status };
+  const unit=v('alUnit'); if(unit) fields.UnitType=unit;
+  ['alTenant2','alTenant3','alTenant4'].forEach((id,i)=>{ const t=v(id); if(t) fields['Tenant'+(i+2)]=t; });
+  const start=v('alStart'), end=v('alEnd');
+  if(start) fields.LeaseStart=start+'T00:00:00Z';
+  if(end)   fields.LeaseEnd=end+'T00:00:00Z';
+  const rent=v('alRent'); if(rent!=='' && !isNaN(Number(rent))) fields.MonthlyRent=Number(rent);
+  const dep=v('alDeposit'); if(dep!=='' && !isNaN(Number(dep))) fields.SecurityDeposit=Number(dep);
+  const due=v('alDue'); if(due) fields.MonthlyRentDueDate=due;
+  const landlord=v('alLandlord'); if(landlord) fields.LandlordName=landlord;
+  const util=v('alUtil'); if(util) fields.UtilityCustom=util;
+  if(pmName){ fields.ContactPersonName=pmName; fields.ContactPersonEmail=pmEmail; }
+  if(status==='Signed') fields.SignedDate=new Date().toISOString().split('T')[0];
+  if(IS_SANDBOX){
+    console.log('[Add Lease] Sandbox — would create Lease Agreement item:', fields, '| PDF:', _leasePdfFile?_leasePdfFile.name:'(none)');
+    toast('🧪 Sandbox — lease NOT created. Payload logged to console.','warn');
+    return;
+  }
+  const btn=document.getElementById('alSaveBtn'); btn.disabled=true; btn.textContent='Saving…';
+  const reset=()=>{ if(btn){ btn.disabled=false; btn.textContent='Save Lease'; } };
+  try{
+    const token=await getToken(); if(!token){ show('Session expired — refresh and sign in.'); reset(); return; }
+    if(_leasePdfFile){
+      const clean=s=>String(s||'').replace(/[\\\/:*?"<>|]+/g,' ').replace(/\s+/g,' ').trim();
+      const fname=clean(`${address} - ${tenant1} - SIGNED`)+'.pdf';
+      const up=await fetch(`https://graph.microsoft.com/v1.0/drives/${LEASE_PDF_DRIVE_ID}/items/${LEASE_PDF_FOLDER_ID}:/${encodeURIComponent(fname)}:/content`,{
+        method:'PUT',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/pdf'},body:_leasePdfFile});
+      if(up.ok){ const it=await up.json(); if(it.webUrl) fields.SignedPdfUrl=it.webUrl; }
+      else { console.warn('lease pdf upload', up.status, await up.text()); toast('⚠ PDF upload failed — creating the row without the file link','warn'); }
+    }
+    const r=await fetch(`https://graph.microsoft.com/v1.0/sites/${SP_SITE}/lists/${LEASE_LIST_ID}/items`,{
+      method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({fields})});
+    if(!r.ok){ const txt=await r.text(); console.warn('create lease', r.status, txt); show('Could not create the lease ('+r.status+'). '+txt.slice(0,220)); reset(); return; }
+    toast('✓ Lease '+fields.LeaseNumber+' created','ok');
+    closeAddLease();
+    loadLeases();
+  }catch(e){ console.warn('saveNewLease', e); show('Error: '+e.message); reset(); }
 }
 
 function populateReqSelect() {
